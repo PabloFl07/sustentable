@@ -1,0 +1,20 @@
+[project]
+name = "sustentable"
+version = "0.1.0"
+description = "An application that allows to create and view models of simple [and multiple] linear regression based on stored data"
+readme = "README.md"
+authors = [
+    { name = "Pablo Fernandez", email = "p.fernandezl@udc.es" },
+    { name = "Adrian", email = "adrian.gvilar@udc.es"},
+    { name = "Pablo Soto", email= "p.soto.bravo@udc.es"},
+    { name = "Diego", email = "diego.lorenzo.cacharron@udc.es"}
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+sustentable = "sustentable:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
