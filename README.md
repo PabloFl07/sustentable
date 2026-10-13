@@ -7,7 +7,7 @@ This project is a Python application that allows you to create, visualize, and p
 ---
 
 ### Prerequisites  
-- Python 3.14.7 or higher
+- Python 3.14 or higher
 - uv 0.13 or higher
 
 ### Steps to run the application  
