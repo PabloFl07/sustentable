@@ -67,6 +67,16 @@ git merge correctly-named-branch
 git push
 ```
 
+#### Tips
+
+**1. Reuse a previous branch**
+
+```bash
+git switch previous-branch
+git rebase dev        # Pulls the actual dev status to the branch | Works as if you created it from dev.
+```
+Now yo can get more work done on that branch without causing any conflicts.
+
 
 ## Commits
 
@@ -101,7 +111,8 @@ We follow [Conventional Commits](https://www.conventionalcommits.org/es/v1.0.0/)
 
 ## Branch Model
 
-No developer commits directly to `main` or `dev`; all work is done on `feature`, `fix` or `docs` branches.  The number corresponds to the story number
+No developer commits directly to `main` or `dev`; all work is done on `feature`, `fix` or `docs` branches.
+The number corresponds to the task created in Taiga.
 
 | Branch | Usage |
 |---|---|
@@ -120,7 +131,9 @@ No developer commits directly to `main` or `dev`; all work is done on `feature`,
 > [!IMPORTANT]
 > **Branch deletion criteria**
 >
-> Short-lived branches created for a single, self-contained and **non-code** task (such as `chore` work) may be deleted once they have been merged into `dev`.
+> You should push the branches you're working on to the remote repository. If you need to make a small change, use an existing branch that best fits the change.
+
+Check the [tips](#tips)
 
 ## Style guide
 
