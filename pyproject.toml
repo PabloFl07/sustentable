@@ -24,3 +24,10 @@ dev = [
     "pre-commit>=4.6.2",
     "ruff>=0.17.0",
 ]
+
+[tool.ruff]
+line-length = 144
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP"]
