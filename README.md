@@ -56,6 +56,7 @@ regression-app/
 ├── src/
     └── sustentable/
 ├── tests/                # Unit and integration tests
+├── AGENTS.md             # Rules for coding agents
 ├── CONTRIBUTING.md       # Contributing guide
 └── README.md             # This file
 ```
@@ -64,7 +65,7 @@ regression-app/
 
 ## Contribution & Collaboration  
 
-To contribute in this project, please read first the [contribution guide](CONTRIBUTING.md).
+To contribute in this project, please read first the [contribution guide](CONTRIBUTING.md). If you use a coding agent, it must follow [AGENTS.md](AGENTS.md).
 
 --- 
 
