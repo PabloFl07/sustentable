@@ -195,6 +195,7 @@ Store secrets in a local `.env` file, which is ignored by Git, and keep an up-to
 All forms of documentations must be written in Markdown format.
 
 - `README.md`: basic information about the project. You may not modify it
+- `AGENTS.md`: rules for coding agents
 - `docs/`: detailed documentation (architecture, design decisions, user manual)
 - `CHANGELOG.md`: brief description of the changes in each version
 
@@ -202,4 +203,6 @@ We place great value on code comments. Poorly commented code may be rejected.
 
 ## Use of AI
 
-We support using AI (i.e., LLMs) as tools for coding. However, you remain responsible for any code you publish and we are responsible for any code we merge and release.
+We support using AI (LLMs and coding agents) as tools. You remain responsible for every change you publish.
+
+If you use an agent, it must follow [AGENTS.md](AGENTS.md). Before you commit, read the full diff, drop anything outside the task, and run Ruff and pytest yourself.
