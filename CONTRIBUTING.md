@@ -190,6 +190,52 @@ Store secrets in a local `.env` file, which is ignored by Git, and keep an up-to
 
 ## Code testing
 
+
+This project uses [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and `pytest` for testing. Make sure you have `uv` installed.
+
+### Install dependencies
+
+Install the project dependencies, including the development dependencies:
+
+```bash
+uv sync --all-groups
+```
+
+### Run the tests
+
+Run the test suite using `pytest` through `uv`:
+
+
+```bash
+uv run pytest
+```
+
+### Run specific tests
+
+To run tests from a specific file:
+
+
+```bash
+uv run pytest tests/test_example.py
+```
+
+To run a specific test function:
+
+
+```bash
+uv run pytest tests/test_example.py::test_example
+```
+
+To display detailed output for each test:
+
+```bash
+uv run pytest -v
+```
+
+### Test coverage
+
+Please ensure that all tests pass before submitting a pull request. If you introduce new functionality or fix a bug, add or update tests accordingly.
+
 ## Documentation
 
 All forms of documentations must be written in Markdown format.
