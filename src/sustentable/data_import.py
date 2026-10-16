@@ -24,6 +24,12 @@ class FileCheck(ABC):
         if not self.file_path.exists():
             raise FileNotFoundError(f"File '{self.file_path}' does not exist.")
 
+    def is_file(self) -> None:
+        """Raise ``ValueError`` if the path is not a regular file, such as a directory with a supported extension."""
+        # ValueError instead of IsADirectoryError so the interface can catch it like the other user-facing errors.
+        if not self.file_path.is_file():
+            raise ValueError(f"'{self.file_path}' is not a file.")
+
     def supported_extension(self) -> None:
         ext = self.file_path.suffix
         if ext.lower() not in self.extensions:
@@ -115,6 +121,7 @@ class Reader(ABC):
         """Run every check on the current ``file_path``, raising on the first one that fails."""
         file_check = self.file_check
         file_check.exists()
+        file_check.is_file()
         file_check.supported_extension()
         file_check.not_empty()
         file_check.not_corrupted()
