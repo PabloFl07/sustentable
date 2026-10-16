@@ -30,8 +30,13 @@ class FileCheck(ABC):
             raise ValueError(f"Extension '{ext}' is not supported. Supported extensions: {list(self.extensions)}.")
 
     def not_empty(self) -> None:
-        if self.file_path.stat().st_size == 0:
+        if self.file_path.stat().st_size == 0 or not self._not_empty():
             raise ValueError(f"File '{self.file_path}' contains no data.")
+
+    @abstractmethod
+    def _not_empty(self) -> bool:
+        """Checks for each type of file if it has data in it. Called to raise a ValueError."""
+        ...
 
     @abstractmethod
     def not_corrupted(self) -> None:
@@ -50,6 +55,9 @@ class FileCheck(ABC):
 class CSVFileCheck(FileCheck):
     extensions = (".csv",)
 
+    def _not_empty(self) -> bool:
+        raise NotImplementedError("Checking for content is not implemented for CSV files.")
+
     def not_corrupted(self) -> None:
         raise NotImplementedError("Corruption check is not implemented for CSV files.")
 
@@ -61,6 +69,9 @@ class CSVFileCheck(FileCheck):
 class ExcelFileCheck(FileCheck):
     extensions = (".xlsx", ".xls")
 
+    def _not_empty(self) -> bool:
+        raise NotImplementedError("Checking for content is not implemented for Excel files.")
+
     def not_corrupted(self) -> None:
         raise NotImplementedError("Corruption check is not implemented for Excel files.")
 
@@ -71,6 +82,9 @@ class ExcelFileCheck(FileCheck):
 
 class SQLiteFileCheck(FileCheck):
     extensions = (".db", ".sqlite", ".sqlite3")
+
+    def _not_empty(self) -> bool:
+        raise NotImplementedError("Checking for content is not implemented for SQLite files.")
 
     def not_corrupted(self) -> None:
         raise NotImplementedError("Corruption check is not implemented for SQLite files.")
