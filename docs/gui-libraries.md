@@ -17,4 +17,8 @@ This note compares Pysual 0.1.2, Tkinter (CPython 3.14), and PySide6 6.12 for th
 
 The team will build the interface with Pysual. Tkinter and PySide6 already have a filtered file dialog and a Matplotlib canvas; Pysual 0.1.2 does not. Both gaps can be closed inside Pysual, because the OS dialogs already exist and custom controls are supported. One MIT library also avoids PySide6's LGPL obligations and Tkinter's older table widgets. Pysual is alpha, its community is small, and native window wheels do not cover every architecture; that is acceptable because a maintainer is on the team and the application only needs a desktop window.
 
-The project will add it with `uv add pysual`. The other two libraries stay out of `pyproject.toml`. The proof of concept goes under `prototipos/` and is not imported by `src/sustentable/`. It will exercise a titled window, a file button and the chosen path, a scrolling sample table, a dropdown, a text field, and a button that shows the selected or typed value. Notes on what broke will be added here after that window runs.
+The project adds it with `uv add pysual`. The other two libraries stay out of `pyproject.toml`.
+
+## Proof of concept
+
+`prototipos/pysual_poc.py` opens a titled window with a file button and the chosen path, a scrolling table of sample rows, a dropdown, a text field, and a button that shows the selected option and the typed text. Run it with `uv run python prototipos/pysual_poc.py`. `src/sustentable` does not import it. Data access is not available, so the rows are constants in the prototype.
