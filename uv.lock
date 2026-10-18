@@ -118,6 +118,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pysual"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/11/8685c6ec717bc05741aa8da74be9eb7cfbc6de4bddfddb9d3702ee8a92c9/pysual-0.1.2.tar.gz", hash = "sha256:893bc8c4b880b96dea83b2fa58706cedb9b376564ee55ace4659b839f0cfc0f9", size = 3374337, upload-time = "2026-10-16T17:20:17.015Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5c/51/02ff7ef574208531af21599e296530c90e568b6fa1475554ec030041a691/pysual-0.1.2-py3-none-any.whl", hash = "sha256:6f2cb3273a0f944da97a9b7693c72fb883517f9305563548fa6d1e26ef93b5d6", size = 1044132, upload-time = "2026-10-16T17:20:09.027Z" },
+    { url = "https://files.pythonhosted.org/packages/72/b3/76260eb70a34081a1861c9c6ba8b213b9cb6bb67f8429dd3de4f55d1c109/pysual-0.1.2-py3-none-macosx_26_0_arm64.whl", hash = "sha256:1682f4b279c2026159ba03382801326af5eab3f060d397ace0487cb31104b711", size = 4047402, upload-time = "2026-10-16T17:20:10.972Z" },
+    { url = "https://files.pythonhosted.org/packages/61/f8/17e43200af452d8ef1a8194f20a49a3967f66e7b00bd0b36b7d54bb13324/pysual-0.1.2-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9dff3e3f035120617bcba2faea54be2bff3675c18de878125738362bd01e65e6", size = 4215010, upload-time = "2026-10-16T17:20:13.091Z" },
+    { url = "https://files.pythonhosted.org/packages/77/9f/680d859845cb6e56a9e836f998648b62bec2ea6c2e009ca9ede400bd823d/pysual-0.1.2-py3-none-win_amd64.whl", hash = "sha256:b33d879ef145732e653bb186e81cf06840a29b1ddbbda4e04aac4439f69f2b39", size = 3575090, upload-time = "2026-10-16T17:20:15.207Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -201,6 +213,7 @@ name = "sustentable"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "pysual" },
     { name = "pytest" },
 ]
 
@@ -211,7 +224,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pytest", specifier = ">=9.1.1" }]
+requires-dist = [
+    { name = "pysual", specifier = ">=0.1.2" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
 
 [package.metadata.requires-dev]
 dev = [
