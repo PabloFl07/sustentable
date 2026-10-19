@@ -8,9 +8,15 @@ Needs refactor:
 - function to check if a file is empty, can be made abstract and be defined for each type of file.
 """
 
+import sqlite3 as sql
 from abc import ABC, abstractmethod
 from pathlib import Path
-import sqlite3 as sql
+from xml.etree.ElementTree import ParseError
+from zipfile import BadZipFile
+
+from openpyxl.utils.exceptions import InvalidFileException
+from pandas import DataFrame, errors, read_csv, read_excel
+from xlrd.biffh import XLRDError
 
 
 class FileCheck(ABC):
@@ -42,8 +48,8 @@ class FileCheck(ABC):
 
     @abstractmethod
     def _not_empty(self) -> bool:
-        """Checks for each type of file if it has data in it. Called to raise a ValueError."""
-        ...
+        """Checks for each type of file if it has data in it. Called for a more specific verification of each type of file."""
+        pass
 
     @abstractmethod
     def not_corrupted(self) -> None:
@@ -63,10 +69,23 @@ class CSVFileCheck(FileCheck):
     extensions = (".csv",)
 
     def _not_empty(self) -> bool:
-        raise NotImplementedError("Checking for content is not implemented for CSV files.")
+        # Reads the CSV file, if it is empty, made only by spaces or tabs or it only has de title row,
+        # it will return False, any other case it will return True.
+        try:
+            df = read_csv(self.file_path, header=0, nrows=1)
+            if df.empty:
+                return False
+        except errors.EmptyDataError:
+            return False
+        return True
 
     def not_corrupted(self) -> None:
-        raise NotImplementedError("Corruption check is not implemented for CSV files.")
+        try:
+            _ = read_csv(self.file_path, header=0, nrows=1)
+        except UnicodeDecodeError as e:
+            raise ValueError(f"File {self.file_path} has a spoofed extension or invalid codification.") from e
+        except errors.ParserError as e:
+            raise ValueError(f"File {self.file_path} has an inconsisten number of columns.") from e
 
     def single_table(self) -> None:
         # Not applicable for CSV files.
@@ -77,10 +96,22 @@ class ExcelFileCheck(FileCheck):
     extensions = (".xlsx", ".xls")
 
     def _not_empty(self) -> bool:
-        raise NotImplementedError("Checking for content is not implemented for Excel files.")
+        # Reads the Excel file, if it only has de title row or if it is empty, it will return False,
+        # any other case it will return True.
+        df = read_excel(self.file_path, header=0, nrows=1)
+        if df.empty:
+            return False
+        return True
 
     def not_corrupted(self) -> None:
-        raise NotImplementedError("Corruption check is not implemented for Excel files.")
+        try:
+            _ = read_excel(self.file_path, header=0, nrows=1)
+        except (KeyError, ValueError, XLRDError) as e:
+            raise ValueError(f"File {self.file_path} is encrypted.") from e
+        except BadZipFile as e:
+            raise ValueError(f"File {self.file_path} has a spoofed extension or is incomplete.") from e
+        except (ParseError, InvalidFileException) as e:
+            raise ValueError(f"File {self.file_path} is corrupted") from e
 
     def single_table(self) -> None:
         # Not applicable for Excel files.
@@ -103,12 +134,10 @@ class SQLiteFileCheck(FileCheck):
             """)
 
             table_name = cursor.fetchone()[0]
-            status = cursor.execute(F"SELECT EXISTS ( SELECT 1 FROM {table_name} LIMIT 1);")
+            status = cursor.execute(f"SELECT EXISTS ( SELECT 1 FROM {table_name} LIMIT 1);")
             return bool(status.fetchone()[0])
         finally:
             conexion.close()
-
-
 
     def not_corrupted(self) -> None:
         conexion = sql.connect(self.file_path)
@@ -147,7 +176,7 @@ class Reader(ABC):
     @abstractmethod
     def _read(self) -> None:
         """Read the file contents. Called only after ``validate()`` has passed."""
-        ...
+        pass
 
     @abstractmethod
     def _get_file_check(self) -> FileCheck:
@@ -187,8 +216,9 @@ class CSVReader(Reader):
     def _get_file_check(self) -> FileCheck:
         return CSVFileCheck(self.file_path)
 
-    def _read(self) -> None:
-        raise NotImplementedError("Reading is not implemented for CSV files.")
+    def _read(self) -> DataFrame:
+        df = read_csv(self.file_path, header=0)
+        return df
 
 
 class ExcelReader(Reader):
@@ -197,8 +227,9 @@ class ExcelReader(Reader):
     def _get_file_check(self) -> FileCheck:
         return ExcelFileCheck(self.file_path)
 
-    def _read(self) -> None:
-        raise NotImplementedError("Reading is not implemented for Excel files.")
+    def _read(self) -> DataFrame:
+        df = read_excel(self.file_path, header=0)
+        return df
 
 
 class SQLiteReader(Reader):
@@ -213,7 +244,7 @@ class SQLiteReader(Reader):
         try:
             cursor = conexion.cursor()
 
-            # Obtener el nombre de la única tabla
+            # Obtains name of the only table.
             cursor.execute("""
                 SELECT name
                 FROM sqlite_master
