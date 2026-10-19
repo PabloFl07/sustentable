@@ -383,12 +383,28 @@ def test_file_check_follows_file_path_changes():
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="Content and corruption checks are not implemented yet")
+#@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="Content and corruption checks are not implemented yet")
 @pytest.mark.parametrize(
     ("reader_class", "fixture_name"),
     [
-        (CSVReader, "example_csv"),
-        (ExcelReader, "example_xlsx"),
+        pytest.param(
+            CSVReader,
+            "example_csv",
+            marks=pytest.mark.xfail(
+                raises=NotImplementedError,
+                strict=True,
+                reason="Content and corruption checks are not implemented yet"
+            )
+        ),
+        pytest.param(
+            ExcelReader,
+            "example_xlsx",
+            marks=pytest.mark.xfail(
+                raises=NotImplementedError,
+                strict=True,
+                reason="Content and corruption checks are not implemented yet"
+            )
+        ),
         (SQLiteReader, "example_sqlite"),
     ],
 )

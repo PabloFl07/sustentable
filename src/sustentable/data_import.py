@@ -10,6 +10,7 @@ Needs refactor:
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+import sqlite3 as sql
 
 
 class FileCheck(ABC):
@@ -90,13 +91,48 @@ class SQLiteFileCheck(FileCheck):
     extensions = (".db", ".sqlite", ".sqlite3")
 
     def _not_empty(self) -> bool:
-        raise NotImplementedError("Checking for content is not implemented for SQLite files.")
+        conexion = sql.connect(self.file_path)
+
+        try:
+            cursor = conexion.cursor()
+            cursor.execute("""
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name NOT LIKE 'sqlite_%'
+            """)
+
+            table_name = cursor.fetchone()[0]
+            status = cursor.execute(F"SELECT EXISTS ( SELECT 1 FROM {table_name} LIMIT 1);")
+            return bool(status.fetchone()[0])
+        finally:
+            conexion.close()
+
+
 
     def not_corrupted(self) -> None:
-        raise NotImplementedError("Corruption check is not implemented for SQLite files.")
+        conexion = sql.connect(self.file_path)
+        try:
+            if conexion.execute("PRAGMA integrity_check").fetchone()[0] == "ok":
+                return None
+            raise ProcessLookupError(f"Data Base: {self.file_path} is corrupted")
+        finally:
+            conexion.close()
 
     def single_table(self) -> None:
-        raise NotImplementedError("Single table check is not implemented for SQLite files.")
+        conexion = sql.connect(self.file_path)
+        try:
+            num_tablas = conexion.execute("""
+                    SELECT COUNT(*)
+                    FROM sqlite_master
+                    WHERE type = 'table'
+                      AND name NOT LIKE 'sqlite_%'
+                """).fetchone()[0]
+            if num_tablas == 1:
+                return None
+            raise RuntimeError(f"Data Base: {self.file_path} contains more than 1 table")
+        finally:
+            conexion.close()
 
 
 class Reader(ABC):
@@ -172,7 +208,26 @@ class SQLiteReader(Reader):
         return SQLiteFileCheck(self.file_path)
 
     def _read(self) -> None:
-        raise NotImplementedError("Reading is not implemented for SQLite files.")
+        conexion = sql.connect(self.file_path)
+
+        try:
+            cursor = conexion.cursor()
+
+            # Obtener el nombre de la única tabla
+            cursor.execute("""
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                  AND name NOT LIKE 'sqlite_%'
+            """)
+
+            table_name = cursor.fetchone()[0]
+            df = conexion.execute(f"SELECT * FROM {table_name}").fetchall()
+
+            return df
+
+        finally:
+            conexion.close()
 
 
 _READERS: tuple[tuple[tuple[str, ...], type[Reader]], ...] = (
