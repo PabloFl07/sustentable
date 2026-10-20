@@ -16,13 +16,14 @@ from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
 
 from openpyxl.utils.exceptions import InvalidFileException
-from pandas import DataFrame, errors, read_csv, read_excel
+from pandas import DataFrame, errors, read_csv, read_excel, read_sql_query
 from xlrd.biffh import XLRDError
 
 from sustentable.exceptions import (
     CorruptedFileError,
     EmptyFileError,
     MissingFileError,
+    MultipleTablesError,
     NotAFileError,
     UnreadableFileError,
     UnsupportedExtensionError,
@@ -96,49 +97,16 @@ class ExcelFileCheck(FileCheck):
 
 
 class SQLiteFileCheck(FileCheck):
+    """Rules for SQLite database files."""
+
     extensions = (".db", ".sqlite", ".sqlite3")
 
-    def _not_empty(self) -> bool:
-        conexion = sql.connect(self.file_path)
-
-        try:
-            cursor = conexion.cursor()
-            cursor.execute("""
-                SELECT name
-                FROM sqlite_master
-                WHERE type = 'table'
-                  AND name NOT LIKE 'sqlite_%'
-            """)
-
-            table_name = cursor.fetchone()[0]
-            status = cursor.execute(f"SELECT EXISTS ( SELECT 1 FROM {table_name} LIMIT 1);")
-            return bool(status.fetchone()[0])
-        finally:
-            conexion.close()
-
-    def not_corrupted(self) -> None:
-        conexion = sql.connect(self.file_path)
-        try:
-            if conexion.execute("PRAGMA integrity_check").fetchone()[0] == "ok":
-                return None
-            raise ProcessLookupError(f"Data Base: {self.file_path} is corrupted")
-        finally:
-            conexion.close()
-
-    def single_table(self) -> None:
-        conexion = sql.connect(self.file_path)
-        try:
-            num_tablas = conexion.execute("""
-                    SELECT COUNT(*)
-                    FROM sqlite_master
-                    WHERE type = 'table'
-                      AND name NOT LIKE 'sqlite_%'
-                """).fetchone()[0]
-            if num_tablas == 1:
-                return None
-            raise RuntimeError(f"Data Base: {self.file_path} contains more than 1 table")
-        finally:
-            conexion.close()
+    def single_table(self, tables: list[str]) -> None:
+        """Raise ``EmptyFileError`` if ``tables``, the user tables of the database, is empty, or ``MultipleTablesError`` if it has several."""
+        if not tables:
+            raise EmptyFileError(f"File '{self.file_path}' contains no tables.")
+        if len(tables) > 1:
+            raise MultipleTablesError(f"File '{self.file_path}' contains {len(tables)} tables, but only one can be imported.")
 
 
 class Reader(ABC):
@@ -231,32 +199,33 @@ class ExcelReader(Reader):
 
 
 class SQLiteReader(Reader):
-    """Reader for SQLite database files."""
+    """Reader for SQLite database files with a single table."""
 
-    def _get_file_check(self) -> FileCheck:
+    def _get_file_check(self) -> SQLiteFileCheck:
         return SQLiteFileCheck(self.file_path)
 
-    def _read(self) -> None:
+    def _parse(self) -> DataFrame:
+        # One connection for the whole read, so the database cannot change between the checks and the read.
         conexion = sql.connect(self.file_path)
-
         try:
-            cursor = conexion.cursor()
-
-            # Obtains name of the only table.
-            cursor.execute("""
-                SELECT name
-                FROM sqlite_master
-                WHERE type = 'table'
-                  AND name NOT LIKE 'sqlite_%'
-            """)
-
-            table_name = cursor.fetchone()[0]
-            df = conexion.execute(f"SELECT * FROM {table_name}").fetchall()
-
-            return df
-
+            self._check_integrity(conexion)
+            tables = [name for (name,) in conexion.execute(f"SELECT name {_SQLITE_TABLES}")]
+            self._get_file_check().single_table(tables)
+            # Quoted so names with spaces or reserved words work; an inner quote is escaped by doubling it.
+            quoted_name = '"' + tables[0].replace('"', '""') + '"'
+            return read_sql_query(f"SELECT * FROM {quoted_name}", conexion)
         finally:
             conexion.close()
+
+    def _check_integrity(self, conexion: sql.Connection) -> None:
+        """Raise ``CorruptedFileError`` if the database is damaged or the file is not a SQLite database."""
+        try:
+            # A file that is not a database, or a badly damaged one, makes the pragma itself raise instead of reporting.
+            result = conexion.execute("PRAGMA integrity_check").fetchone()[0]
+        except sql.DatabaseError as e:
+            raise CorruptedFileError(f"File '{self.file_path}' is corrupted or is not a SQLite database.") from e
+        if result != "ok":
+            raise CorruptedFileError(f"File '{self.file_path}' is corrupted: {result}")
 
 
 _READERS: tuple[tuple[tuple[str, ...], type[Reader]], ...] = (
