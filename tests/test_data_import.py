@@ -1,304 +1,191 @@
-import sqlite3
-import zipfile
+"""Tests for the data import module.
+
+The example files are fixtures defined in ``conftest.py``. Fixtures cannot be passed to ``parametrize`` directly,
+so the tests receive their names and get the file with ``request.getfixturevalue()``.
+"""
+
+import os
 from pathlib import Path
 
 import pytest
+from pandas import DataFrame
+from pandas.api.types import is_integer_dtype
 
-from sustentable.data_import import (
-    _READERS,
-    CSVFileCheck,
-    CSVReader,
-    ExcelFileCheck,
-    ExcelReader,
-    FileCheck,
-    Reader,
-    SQLiteFileCheck,
-    SQLiteReader,
-    get_reader,
+from sustentable.data_import import _READERS, CSVReader, ExcelReader, SQLiteReader, get_reader
+from sustentable.exceptions import (
+    CorruptedFileError,
+    DataImportError,
+    EmptyFileError,
+    MissingFileError,
+    MultipleTablesError,
+    NotAFileError,
+    UnreadableFileError,
+    UnsupportedExtensionError,
 )
 
-# ----------------------------------------------------------------------------
-# Fixtures
-# ----------------------------------------------------------------------------
 
-
-@pytest.fixture
-def example_empty_csv(tmp_path):
-    path = Path(tmp_path / "example.csv")
-    path.touch()
-    return path
-
-
-@pytest.fixture
-def example_csv(tmp_path):
-    path = Path(tmp_path / "example.csv")
-    path.write_text("name,age\npablo,19\ndiego,21")
-    return path
-
-
-@pytest.fixture
-def example_empty_xlsx(tmp_path):
-    path = Path(tmp_path / "example.xlsx")
-    path.touch()
-    return path
-
-
-# Minimal parts of a valid .xlsx (a zip of XML files), so no Excel library is needed.
-_XLSX_PARTS = {
-    "[Content_Types].xml": (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        '<Default Extension="xml" ContentType="application/xml"/>'
-        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        '<Override PartName="/xl/worksheets/sheet1.xml"'
-        ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-        "</Types>"
-    ),
-    "_rels/.rels": (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"'
-        ' Target="xl/workbook.xml"/>'
-        "</Relationships>"
-    ),
-    "xl/workbook.xml": (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>'
-        "</workbook>"
-    ),
-    "xl/_rels/workbook.xml.rels": (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
-        ' Target="worksheets/sheet1.xml"/>'
-        "</Relationships>"
-    ),
-    "xl/worksheets/sheet1.xml": (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
-        '<row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="B1" t="inlineStr"><is><t>age</t></is></c></row>'
-        '<row r="2"><c r="A2" t="inlineStr"><is><t>pablo</t></is></c><c r="B2"><v>19</v></c></row>'
-        '<row r="3"><c r="A3" t="inlineStr"><is><t>diego</t></is></c><c r="B3"><v>21</v></c></row>'
-        "</sheetData></worksheet>"
-    ),
-}
-
-
-@pytest.fixture
-def example_xlsx(tmp_path):
-    path = Path(tmp_path / "example.xlsx")
-    with zipfile.ZipFile(path, "w") as xlsx:
-        for name, content in _XLSX_PARTS.items():
-            xlsx.writestr(name, content)
-    return path
-
-
-@pytest.fixture
-def example_empty_sqlite(tmp_path):
-    path = Path(tmp_path / "example.db")
-    path.touch()
-    return path
-
-
-@pytest.fixture
-def example_sqlite(tmp_path):
-    path = Path(tmp_path / "example.db")
-    connection = sqlite3.connect(path)
-    with connection:
-        connection.execute("CREATE TABLE people (name TEXT, age INTEGER)")
-        connection.executemany("INSERT INTO people VALUES (?, ?)", [("pablo", 19), ("diego", 21)])
-    connection.close()
-    return path
+def _assert_people(data: DataFrame) -> None:
+    """Check that ``data`` holds the two rows of the valid example files, with ``age`` as integers."""
+    assert isinstance(data, DataFrame)
+    assert list(data.columns) == ["name", "age"]
+    assert data.values.tolist() == [["José", 19], ["Begoña", 21]]
+    # The xlsx stores age as a number and the CSV as text, so both must end up as integers.
+    assert is_integer_dtype(data["age"])
 
 
 # ----------------------------------------------------------------------------
-# exists(): the path points to something
+# read(): a valid file returns its data
 # ----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("file_check_class", "fixture_name"),
+    "fixture_name",
     [
-        (CSVFileCheck, "example_csv"),
-        (ExcelFileCheck, "example_xlsx"),
-        (SQLiteFileCheck, "example_sqlite"),
+        "example_csv",
+        "example_uppercase_csv",
+        "example_bom_csv",
+        pytest.param(
+            "example_semicolon_csv",
+            marks=pytest.mark.xfail(strict=True, reason="CSVReader does not detect the separator, so it reads a single 'name;age' column"),
+        ),
+        "example_xlsx",
+        "example_sqlite",
     ],
 )
-def test_file_exists(request, file_check_class, fixture_name):
-    """An existing file of each format passes ``exists()``."""
-    # Fixtures cannot be passed to parametrize directly, so their names are resolved at run time.
-    file_check_class(request.getfixturevalue(fixture_name)).exists()
+def test_read_returns_file_content(request, fixture_name):
+    """``read()`` returns the columns and rows of the file, with the accents and ñ of its content."""
+    path = request.getfixturevalue(fixture_name)
+    _assert_people(get_reader(path).read())
 
 
-def test_not_file_exists(tmp_path):
-    """A path with nothing behind it fails ``exists()``."""
-    with pytest.raises(FileNotFoundError):
-        CSVFileCheck(tmp_path / "imaginary.csv").exists()
+@pytest.mark.parametrize("absolute", [True, False], ids=["absolute", "relative"])
+@pytest.mark.parametrize("fixture_name", ["example_csv", "example_xlsx", "example_sqlite"])
+def test_read_with_path_formats(request, monkeypatch, tmp_path, fixture_name, absolute):
+    """``get_reader()`` and ``read()`` accept absolute and relative paths with spaces, accents and ñ."""
+    source = request.getfixturevalue(fixture_name)
+    relative = Path("carpeta con espacios") / f"canción del año{source.suffix}"
+    (tmp_path / relative).parent.mkdir()
+    (tmp_path / relative).write_bytes(source.read_bytes())
+
+    # A relative path is resolved against the working directory, so it is moved to tmp_path.
+    monkeypatch.chdir(tmp_path)
+    file_path = str(tmp_path / relative) if absolute else str(relative)
+
+    reader = get_reader(file_path)
+    assert reader.file_path == Path(file_path)
+    _assert_people(reader.read())
 
 
-# ----------------------------------------------------------------------------
-# is_file(): the path is a regular file
-# ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("file_check_class", "fixture_name"),
-    [
-        (CSVFileCheck, "example_csv"),
-        (ExcelFileCheck, "example_xlsx"),
-        (SQLiteFileCheck, "example_sqlite"),
-    ],
-)
-def test_is_file(request, file_check_class, fixture_name):
-    """A regular file of each format passes ``is_file()``."""
-    file_check_class(request.getfixturevalue(fixture_name)).is_file()
-
-
-def test_symlink_to_file_is_file(tmp_path, example_csv):
-    """A symbolic link to a regular file passes ``is_file()``, because the link is followed."""
+def test_read_follows_symlink(tmp_path, example_csv):
+    """A symbolic link to a valid file is read like the file itself."""
     link = tmp_path / "link.csv"
-    link.symlink_to(example_csv)
-    CSVFileCheck(link).is_file()
+    # Windows only lets administrators or Developer Mode create symlinks; anywhere else this raises OSError.
+    try:
+        link.symlink_to(example_csv)
+    except OSError as error:
+        pytest.skip(f"Symbolic links cannot be created here: {error}")
+    _assert_people(CSVReader(link).read())
+
+
+def test_read_sqlite_ignores_internal_tables_views_and_indexes(example_autoincrement_sqlite):
+    """``sqlite_sequence``, a view and an index do not count as extra tables."""
+    assert len(SQLiteReader(example_autoincrement_sqlite).read()) == 2
+
+
+# ----------------------------------------------------------------------------
+# read(): each invalid file raises its own exception
+# ----------------------------------------------------------------------------
+
+_NO_PERMISSIONS = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0, reason="Needs POSIX permissions and a user other than root"
+)
 
 
 @pytest.mark.parametrize(
-    ("file_check_class", "folder_name"),
+    ("reader_class", "fixture_name", "error"),
     [
-        (CSVFileCheck, "data.csv"),
-        (ExcelFileCheck, "data.xlsx"),
-        (SQLiteFileCheck, "data.db"),
+        # The path does not lead to a regular file.
+        (CSVReader, "example_missing_csv", MissingFileError),
+        (CSVReader, "example_directory_csv", NotAFileError),
+        # The file exists but the user cannot read it. Skipped where chmod(0) does not stop reading: root or Windows.
+        pytest.param(CSVReader, "example_unreadable_csv", UnreadableFileError, marks=_NO_PERMISSIONS),
+        pytest.param(ExcelReader, "example_unreadable_xlsx", UnreadableFileError, marks=_NO_PERMISSIONS),
+        pytest.param(SQLiteReader, "example_unreadable_sqlite", UnreadableFileError, marks=_NO_PERMISSIONS),
+        # The extension is unknown, missing, or belongs to another reader.
+        (CSVReader, "example_txt", UnsupportedExtensionError),
+        (CSVReader, "example_no_extension", UnsupportedExtensionError),
+        (CSVReader, "example_xlsx", UnsupportedExtensionError),
+        (ExcelReader, "example_csv", UnsupportedExtensionError),
+        (SQLiteReader, "example_xlsx", UnsupportedExtensionError),
+        # The file can be read but has no data rows.
+        (CSVReader, "example_empty_csv", EmptyFileError),
+        (CSVReader, "example_header_only_csv", EmptyFileError),
+        (CSVReader, "example_blank_lines_csv", EmptyFileError),
+        (ExcelReader, "example_empty_xlsx", EmptyFileError),
+        (ExcelReader, "example_header_only_xlsx", EmptyFileError),
+        (ExcelReader, "example_no_rows_xlsx", EmptyFileError),
+        (SQLiteReader, "example_empty_sqlite", EmptyFileError),
+        (SQLiteReader, "example_no_tables_sqlite", EmptyFileError),
+        (SQLiteReader, "example_empty_table_sqlite", EmptyFileError),
+        # The file cannot be parsed.
+        (CSVReader, "example_binary_csv", CorruptedFileError),
+        (CSVReader, "example_latin1_csv", CorruptedFileError),
+        (CSVReader, "example_ragged_csv", CorruptedFileError),
+        (CSVReader, "example_unclosed_quote_csv", CorruptedFileError),
+        (ExcelReader, "example_text_xlsx", CorruptedFileError),
+        (ExcelReader, "example_truncated_xlsx", CorruptedFileError),
+        (ExcelReader, "example_broken_xml_xlsx", CorruptedFileError),
+        (SQLiteReader, "example_text_sqlite", CorruptedFileError),
+        (SQLiteReader, "example_truncated_sqlite", CorruptedFileError),
+        # There is more than one table, so there is no way to know which one to load.
+        (SQLiteReader, "example_two_tables_sqlite", MultipleTablesError),
     ],
 )
-def test_directory_is_not_file(tmp_path, file_check_class, folder_name):
-    """A directory named with a supported extension fails ``is_file()``."""
-    # The directory exists, so exists() alone would let it through.
-    folder = tmp_path / folder_name
-    folder.mkdir()
-    with pytest.raises(ValueError, match="is not a file"):
-        file_check_class(folder).is_file()
+# Test names such as "CSVReader-example_empty_csv-EmptyFileError".
+def test_read_raises_specific_error(request, reader_class, fixture_name, error):
+    """``read()`` raises the exception of the problem, not a library exception or the one of another problem.
 
-
-def test_validate_rejects_directory(tmp_path):
-    """``validate()`` rejects a directory before reaching the content checks."""
-    # If is_file() were skipped, validate() would end in NotImplementedError instead of this ValueError.
-    folder = tmp_path / "data.csv"
-    folder.mkdir()
-    with pytest.raises(ValueError, match="is not a file"):
-        CSVReader(folder).validate()
+    ``read()`` instead of ``validate()`` because the content is checked while parsing, so ``validate()`` alone only
+    catches the file system problems.
+    """
+    path = request.getfixturevalue(fixture_name)
+    with pytest.raises(error):
+        reader_class(path).read()
 
 
 # ----------------------------------------------------------------------------
-# supported_extension(): only the extensions of each format are accepted
+# get_reader(): picks the reader from the extension
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("file_check_class", "file_name"),
-    [
-        (CSVFileCheck, "data.csv"),
-        (CSVFileCheck, "DATA.CSV"),
-        (ExcelFileCheck, "data.xlsx"),
-        (ExcelFileCheck, "data.xls"),
-        (ExcelFileCheck, "DATA.XLSX"),
-        (SQLiteFileCheck, "data.db"),
-        (SQLiteFileCheck, "data.sqlite"),
-        (SQLiteFileCheck, "data.sqlite3"),
-        (SQLiteFileCheck, "DATA.DB"),
-    ],
-)
-def test_supported_extension(file_check_class, file_name):
-    """Every extension of a format is accepted by its check, regardless of case."""
-    # The extension check only looks at the name, so the files do not need to exist.
-    file_check_class(Path(file_name)).supported_extension()
+def test_get_reader_covers_every_registered_extension():
+    """Every extension registered in ``_READERS`` leads ``get_reader()`` to its reader, in lowercase and uppercase."""
+    # Reads the registry instead of a fixed list, so new formats are covered without editing this test.
+    for extensions, reader_class in _READERS:
+        for ext in extensions:
+            assert isinstance(get_reader(f"data{ext}"), reader_class)
+            assert isinstance(get_reader(Path(f"DATA{ext.upper()}")), reader_class)
 
 
-@pytest.mark.parametrize(
-    ("file_check_class", "file_name"),
-    [
-        (CSVFileCheck, "data.txt"),
-        (CSVFileCheck, "data.xlsx"),
-        (CSVFileCheck, "data"),
-        (ExcelFileCheck, "data.csv"),
-        (ExcelFileCheck, "data.xlm"),
-        (SQLiteFileCheck, "data.csv"),
-        (SQLiteFileCheck, "data.sql"),
-    ],
-)
-def test_unsupported_extension(file_check_class, file_name):
-    """Extensions of other formats, unknown extensions and missing extensions are rejected."""
-    with pytest.raises(ValueError):
-        file_check_class(Path(file_name)).supported_extension()
-
-
-@pytest.mark.parametrize(
-    ("reader_class", "file_name"),
-    [
-        (CSVReader, "data.xlsx"),
-        (CSVReader, "data.db"),
-        (ExcelReader, "data.csv"),
-        (ExcelReader, "data.sqlite"),
-        (SQLiteReader, "data.csv"),
-        (SQLiteReader, "data.xls"),
-    ],
-)
-def test_wrong_reader_for_extension(tmp_path, reader_class, file_name):
-    """A reader rejects a file of another format, even though the module supports that extension."""
-    # The file has content so validate() gets past exists(), is_file() and reaches the extension check.
-    path = tmp_path / file_name
-    path.write_text("some data")
-    with pytest.raises(ValueError, match="not supported"):
-        reader_class(path).validate()
+@pytest.mark.parametrize("file_path", ["data.txt", "data.json", "data"])
+def test_get_reader_unsupported_extension(file_path):
+    """``get_reader()`` rejects an unknown or missing extension before any file is opened."""
+    with pytest.raises(UnsupportedExtensionError):
+        get_reader(file_path)
 
 
 # ----------------------------------------------------------------------------
-# not_empty(): files without data are rejected
+# Reader.file_path: always a Path, and the checks follow it
 # ----------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("file_check_class", "fixture_name"),
-    [
-        (CSVFileCheck, "example_empty_csv"),
-        (ExcelFileCheck, "example_empty_xlsx"),
-        (SQLiteFileCheck, "example_empty_sqlite"),
-    ],
-)
-def test_empty_file(request, file_check_class, fixture_name):
-    """A zero byte file fails ``not_empty()`` for every format."""
-    # The size check runs first and short-circuits, so the unimplemented _not_empty() is never called.
-    with pytest.raises(ValueError):
-        file_check_class(request.getfixturevalue(fixture_name)).not_empty()
-
-
-@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="CSVFileCheck._not_empty() is not implemented yet")
-def test_not_empty_csv(example_csv):
-    """A CSV with rows passes ``not_empty()``."""
-    # strict=True turns an unexpected pass into a failure, so the marker must be removed once _not_empty() exists.
-    CSVFileCheck(example_csv).not_empty()
-
-
-# ----------------------------------------------------------------------------
-# Reader.file_path: always stored as a Path
-# ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("file_path", ["data.csv", Path("data.csv")])
-def test_file_path_stored_as_path(file_path):
-    """The path given to the constructor is stored as a ``Path``, whether it was a ``str`` or a ``Path``."""
-    reader = CSVReader(file_path)
+def test_file_check_follows_file_path_changes():
+    """Assigning a ``str`` to ``file_path`` stores a ``Path``, and ``file_check`` points to the new path instead of the old one."""
+    reader = CSVReader("first.csv")
+    reader.file_path = "second.csv"
+    assert reader.file_path == Path("second.csv")
     assert isinstance(reader.file_path, Path)
-    assert reader.file_path == Path("data.csv")
-
-
-def test_file_path_setter_converts_to_path():
-    """Assigning a ``str`` to ``file_path`` after construction also stores a ``Path``."""
-    reader = CSVReader("data.csv")
-    reader.file_path = "other.csv"
-    assert isinstance(reader.file_path, Path)
-    assert reader.file_path == Path("other.csv")
+    assert reader.file_check.file_path == Path("second.csv")
 
 
 @pytest.mark.parametrize("file_path", [None, 123, ["data.csv"]])
@@ -309,105 +196,23 @@ def test_file_path_invalid_type(file_path):
 
 
 # ----------------------------------------------------------------------------
-# get_reader(): picks the reader from the extension
+# Exceptions: one base class for the interface, builtin parents for old callers
 # ----------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ("file_path", "reader_class"),
+    ("error_class", "builtin_class"),
     [
-        ("data.csv", CSVReader),
-        ("data.xlsx", ExcelReader),
-        ("data.xls", ExcelReader),
-        ("data.db", SQLiteReader),
-        ("data.sqlite", SQLiteReader),
-        ("data.sqlite3", SQLiteReader),
-        ("DATA.CSV", CSVReader),
-        (Path("data.XLSX"), ExcelReader),
+        (MissingFileError, FileNotFoundError),
+        (NotAFileError, ValueError),
+        (UnreadableFileError, PermissionError),
+        (UnsupportedExtensionError, ValueError),
+        (CorruptedFileError, ValueError),
+        (EmptyFileError, ValueError),
+        (MultipleTablesError, ValueError),
     ],
 )
-def test_get_reader(file_path, reader_class):
-    """``get_reader()`` returns the reader for the extension, ignoring case, and keeps the given path."""
-    reader = get_reader(file_path)
-    assert isinstance(reader, reader_class)
-    assert reader.file_path == Path(file_path)
-
-
-def test_get_reader_covers_every_registered_extension():
-    """Every extension registered in ``_READERS`` leads ``get_reader()`` to its reader."""
-    # Reads the registry instead of a fixed list, so new formats are covered without editing this test.
-    for extensions, reader_class in _READERS:
-        for ext in extensions:
-            assert isinstance(get_reader(f"data{ext}"), reader_class)
-
-
-@pytest.mark.parametrize("file_path", ["data.txt", "data.json", "data"])
-def test_get_reader_unsupported_extension(file_path):
-    """``get_reader()`` raises ``ValueError`` for an unknown or missing extension."""
-    with pytest.raises(ValueError):
-        get_reader(file_path)
-
-
-# ----------------------------------------------------------------------------
-# _get_file_check() and file_check: each reader builds its own check
-# ----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("reader_class", "file_check_class"),
-    [
-        (CSVReader, CSVFileCheck),
-        (ExcelReader, ExcelFileCheck),
-        (SQLiteReader, SQLiteFileCheck),
-    ],
-)
-def test_get_file_check(reader_class, file_check_class):
-    """Each reader builds the check for its own format, pointing to the same path."""
-    # The extension is irrelevant here: no check is run, only the type of the check is inspected.
-    reader: Reader = reader_class("data.file")
-    file_check = reader._get_file_check()
-    assert isinstance(file_check, FileCheck)
-    assert isinstance(file_check, file_check_class)
-    assert file_check.file_path == reader.file_path
-
-
-def test_file_check_follows_file_path_changes():
-    """After changing ``file_path``, ``file_check`` points to the new path instead of the old one."""
-    reader = CSVReader("first.csv")
-    reader.file_path = "second.csv"
-    assert reader.file_check.file_path == Path("second.csv")
-
-
-# ----------------------------------------------------------------------------
-# validate(): a valid file passes every check
-# ----------------------------------------------------------------------------
-
-
-#@pytest.mark.xfail(raises=NotImplementedError, strict=True, reason="Content and corruption checks are not implemented yet")
-@pytest.mark.parametrize(
-    ("reader_class", "fixture_name"),
-    [
-        pytest.param(
-            CSVReader,
-            "example_csv",
-            marks=pytest.mark.xfail(
-                raises=NotImplementedError,
-                strict=True,
-                reason="Content and corruption checks are not implemented yet"
-            )
-        ),
-        pytest.param(
-            ExcelReader,
-            "example_xlsx",
-            marks=pytest.mark.xfail(
-                raises=NotImplementedError,
-                strict=True,
-                reason="Content and corruption checks are not implemented yet"
-            )
-        ),
-        (SQLiteReader, "example_sqlite"),
-    ],
-)
-def test_valid_file_passes_validate(request, reader_class, fixture_name):
-    """A valid file of each format passes every check in ``validate()``."""
-    reader_class(request.getfixturevalue(fixture_name)).validate()
+def test_exception_hierarchy(error_class, builtin_class):
+    """Every error derives from ``DataImportError`` and from the builtin exception the module raised before."""
+    assert issubclass(error_class, DataImportError)
+    assert issubclass(error_class, builtin_class)
