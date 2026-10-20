@@ -1,11 +1,12 @@
-"""
-Not implemented:
-- function to read data specific to each type of file.
-- function to check if a file is corrupted.
-- function to check for a single table in sqlite.
+"""Read a data file (CSV, Excel or SQLite) into a ``DataFrame`` after checking that it can be imported.
 
-Needs refactor:
-- function to check if a file is empty, can be made abstract and be defined for each type of file.
+Responsibilities are split in two: a ``FileCheck`` judges and a ``Reader`` reads. A ``FileCheck`` never opens the file
+with pandas or sqlite3; it only looks at the path, or at data the ``Reader`` hands to it. A ``Reader`` does all the
+parsing, so it is the one that turns the errors of its library into ``CorruptedFileError``.
+
+``Reader.validate()`` runs the checks that need no parsing (the path exists, is a readable, non-empty file and has a
+supported extension). ``Reader.read()`` runs them, parses the file once and checks that the result has data. Every
+error derives from ``DataImportError`` (see ``sustentable.exceptions``).
 """
 
 import sqlite3 as sql
@@ -18,8 +19,25 @@ from openpyxl.utils.exceptions import InvalidFileException
 from pandas import DataFrame, errors, read_csv, read_excel
 from xlrd.biffh import XLRDError
 
+from sustentable.exceptions import (
+    CorruptedFileError,
+    EmptyFileError,
+    MissingFileError,
+    NotAFileError,
+    UnreadableFileError,
+    UnsupportedExtensionError,
+)
 
-class FileCheck(ABC):
+# User tables of a SQLite database, leaving out the internal ones such as sqlite_sequence.
+_SQLITE_TABLES = "FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+
+
+class FileCheck:
+    """Rules a file must follow. They look at the path or at data already read, never at the file contents directly.
+
+    Not abstract: every rule is shared, and each format only sets its ``extensions`` or adds rules of its own.
+    """
+
     # Extensions accepted by each concrete check, lowercase and with the leading dot.
     extensions: tuple[str, ...] = ()
 
@@ -28,94 +46,53 @@ class FileCheck(ABC):
         self.file_path = file_path
 
     def exists(self) -> None:
+        """Raise ``MissingFileError`` if the path does not point to anything."""
         if not self.file_path.exists():
-            raise FileNotFoundError(f"File '{self.file_path}' does not exist.")
+            raise MissingFileError(f"File '{self.file_path}' does not exist.")
 
     def is_file(self) -> None:
-        """Raise ``ValueError`` if the path is not a regular file, such as a directory with a supported extension."""
-        # ValueError instead of IsADirectoryError so the interface can catch it like the other user-facing errors.
+        """Raise ``NotAFileError`` if the path is not a regular file, such as a directory with a supported extension."""
+        # NotAFileError instead of IsADirectoryError so the interface can catch it like the other user-facing errors.
         if not self.file_path.is_file():
-            raise ValueError(f"'{self.file_path}' is not a file.")
+            raise NotAFileError(f"'{self.file_path}' is not a file.")
+
+    def readable(self) -> None:
+        """Raise ``UnreadableFileError`` if the user has no permission to read the file."""
+        # Opening the file is more reliable than os.access(), which checks the real user instead of the effective one
+        # and can be wrong with ACLs or network file systems. It is also what pandas and sqlite3 will do later.
+        try:
+            with self.file_path.open("rb"):
+                pass
+        except PermissionError as e:
+            raise UnreadableFileError(f"File '{self.file_path}' cannot be read: permission denied.") from e
 
     def supported_extension(self) -> None:
+        """Raise ``UnsupportedExtensionError`` if the extension is not one of ``extensions``."""
         ext = self.file_path.suffix
         if ext.lower() not in self.extensions:
-            raise ValueError(f"Extension '{ext}' is not supported. Supported extensions: {list(self.extensions)}.")
+            raise UnsupportedExtensionError(f"Extension '{ext}' is not supported. Supported extensions: {list(self.extensions)}.")
 
-    def not_empty(self) -> None:
-        if self.file_path.stat().st_size == 0 or not self._not_empty():
-            raise ValueError(f"File '{self.file_path}' contains no data.")
+    def not_zero_bytes(self) -> None:
+        """Raise ``EmptyFileError`` if the file has zero bytes, which some libraries would report as corrupted."""
+        if self.file_path.stat().st_size == 0:
+            raise EmptyFileError(f"File '{self.file_path}' contains no data.")
 
-    @abstractmethod
-    def _not_empty(self) -> bool:
-        """Checks for each type of file if it has data in it. Called for a more specific verification of each type of file."""
-        pass
-
-    @abstractmethod
-    def not_corrupted(self) -> None:
-        # A more specific check can be implemented here depending on the file type.
-        # For example, a CSV could be test-read with pandas, a JSON with json.loads, etc.
-        pass
-
-    @abstractmethod
-    def single_table(self) -> None:
-        # A check for SQLite databases can be implemented here.
-        # For example, connect to the database and count the number of tables.
-        # The implementation of this method for csv and xlsx will remain empty.
-        pass
+    def not_empty(self, df: DataFrame | None) -> None:
+        """Raise ``EmptyFileError`` if ``df``, the data read from the file, has no rows."""
+        if df is None or df.empty:
+            raise EmptyFileError(f"File '{self.file_path}' contains no data.")
 
 
 class CSVFileCheck(FileCheck):
+    """Rules for CSV files."""
+
     extensions = (".csv",)
-
-    def _not_empty(self) -> bool:
-        # Reads the CSV file, if it is empty, made only by spaces or tabs or it only has de title row,
-        # it will return False, any other case it will return True.
-        try:
-            df = read_csv(self.file_path, header=0, nrows=1)
-            if df.empty:
-                return False
-        except errors.EmptyDataError:
-            return False
-        return True
-
-    def not_corrupted(self) -> None:
-        try:
-            _ = read_csv(self.file_path, header=0, nrows=1)
-        except UnicodeDecodeError as e:
-            raise ValueError(f"File {self.file_path} has a spoofed extension or invalid codification.") from e
-        except errors.ParserError as e:
-            raise ValueError(f"File {self.file_path} has an inconsisten number of columns.") from e
-
-    def single_table(self) -> None:
-        # Not applicable for CSV files.
-        pass
 
 
 class ExcelFileCheck(FileCheck):
+    """Rules for Excel files (``.xlsx`` and ``.xls``)."""
+
     extensions = (".xlsx", ".xls")
-
-    def _not_empty(self) -> bool:
-        # Reads the Excel file, if it only has de title row or if it is empty, it will return False,
-        # any other case it will return True.
-        df = read_excel(self.file_path, header=0, nrows=1)
-        if df.empty:
-            return False
-        return True
-
-    def not_corrupted(self) -> None:
-        try:
-            _ = read_excel(self.file_path, header=0, nrows=1)
-        except (KeyError, ValueError, XLRDError) as e:
-            raise ValueError(f"File {self.file_path} is encrypted.") from e
-        except BadZipFile as e:
-            raise ValueError(f"File {self.file_path} has a spoofed extension or is incomplete.") from e
-        except (ParseError, InvalidFileException) as e:
-            raise ValueError(f"File {self.file_path} is corrupted") from e
-
-    def single_table(self) -> None:
-        # Not applicable for Excel files.
-        pass
 
 
 class SQLiteFileCheck(FileCheck):
@@ -165,32 +142,37 @@ class SQLiteFileCheck(FileCheck):
 
 
 class Reader(ABC):
+    """Validate and read one file. Each subclass parses its format and provides the ``FileCheck`` with its rules."""
+
     def __init__(self, file_path: str | Path) -> None:
         self.file_path = file_path
 
-    def read(self) -> None:
-        """Validate the file and read its contents."""
+    def read(self) -> DataFrame:
+        """Validate the file and return its contents, raising a ``DataImportError`` on the first problem found."""
         self.validate()
-        return self._read()
-
-    @abstractmethod
-    def _read(self) -> None:
-        """Read the file contents. Called only after ``validate()`` has passed."""
-        pass
-
-    @abstractmethod
-    def _get_file_check(self) -> FileCheck:
-        pass
+        df = self._parse()
+        self.file_check.not_empty(df)
+        return df
 
     def validate(self) -> None:
-        """Run every check on the current ``file_path``, raising on the first one that fails."""
+        """Run the checks that need no parsing. Corrupted or empty content is only found by ``read()``."""
         file_check = self.file_check
         file_check.exists()
         file_check.is_file()
+        file_check.readable()
         file_check.supported_extension()
-        file_check.not_empty()
-        file_check.not_corrupted()
-        file_check.single_table()
+        file_check.not_zero_bytes()
+
+    @abstractmethod
+    def _parse(self) -> DataFrame | None:
+        """Read the whole file with the library of its format, raising ``CorruptedFileError`` if it cannot be parsed.
+
+        Return ``None`` if the file holds nothing to parse. Called only after ``validate()`` has passed.
+        """
+
+    @abstractmethod
+    def _get_file_check(self) -> FileCheck:
+        """Return the ``FileCheck`` of this format for the current ``file_path``."""
 
     @property
     def file_check(self) -> FileCheck:
@@ -211,25 +193,41 @@ class Reader(ABC):
 
 
 class CSVReader(Reader):
-    """Reader for CSV files."""
+    """Reader for CSV files encoded in UTF-8."""
 
-    def _get_file_check(self) -> FileCheck:
+    def _get_file_check(self) -> CSVFileCheck:
         return CSVFileCheck(self.file_path)
 
-    def _read(self) -> DataFrame:
-        df = read_csv(self.file_path, header=0)
-        return df
+    def _parse(self) -> DataFrame | None:
+        # Every row is parsed, because a malformed row can be anywhere in the file.
+        try:
+            return read_csv(self.file_path, header=0)
+        except errors.EmptyDataError:
+            # Only blank lines: the file is empty, not corrupted, so not_empty() reports it.
+            return None
+        except UnicodeDecodeError as e:
+            raise CorruptedFileError(f"File '{self.file_path}' has a spoofed extension or an encoding other than UTF-8.") from e
+        except errors.ParserError as e:
+            raise CorruptedFileError(f"File '{self.file_path}' is malformed: {e}") from e
 
 
 class ExcelReader(Reader):
-    """Reader for Excel files (``.xlsx`` and ``.xls``)."""
+    """Reader for Excel files (``.xlsx`` and ``.xls``). Only the first worksheet is read."""
 
-    def _get_file_check(self) -> FileCheck:
+    def _get_file_check(self) -> ExcelFileCheck:
         return ExcelFileCheck(self.file_path)
 
-    def _read(self) -> DataFrame:
-        df = read_excel(self.file_path, header=0)
-        return df
+    def _parse(self) -> DataFrame:
+        # The whole worksheet is parsed, because the damage can be past the first row.
+        try:
+            return read_excel(self.file_path, header=0)
+        except (KeyError, ValueError, XLRDError) as e:
+            # pandas raises ValueError both for encrypted workbooks and for files that are not Excel at all.
+            raise CorruptedFileError(f"File '{self.file_path}' is encrypted or is not an Excel file.") from e
+        except BadZipFile as e:
+            raise CorruptedFileError(f"File '{self.file_path}' has a spoofed extension or is incomplete.") from e
+        except (ParseError, InvalidFileException) as e:
+            raise CorruptedFileError(f"File '{self.file_path}' is corrupted.") from e
 
 
 class SQLiteReader(Reader):
@@ -274,4 +272,4 @@ def get_reader(file_path: str | Path) -> Reader:
     for extensions, reader_class in _READERS:
         if ext in extensions:
             return reader_class(file_path)
-    raise ValueError(f"Extension '{ext}' is not supported.")
+    raise UnsupportedExtensionError(f"Extension '{ext}' is not supported.")
