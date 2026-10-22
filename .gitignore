@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# IDEs
+.vscode
+.cursor
 
 # Proyect-specific
 data/
