@@ -4,12 +4,15 @@ The file dialog is not opened. ``show_dataset`` is the load the button runs afte
 A cancelled dialog is not part of these tests.
 """
 
+from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
+from pandas import NA, DataFrame, Series
 
 from sustentable.data_import import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
-from sustentable.dataset_window import DATASET_EXTENSIONS, DatasetWindow
+from sustentable.dataset_window import DATASET_EXTENSIONS, DatasetWindow, grid_records
 from sustentable.exceptions import CorruptedFileError
 
 
@@ -33,7 +36,10 @@ def test_dialog_extensions_follow_the_import_module():
 
 @pytest.mark.parametrize("fixture_name", ["example_csv", "example_xlsx", "example_sqlite"])
 def test_show_dataset_displays_the_file(request, tmp_path, fixture_name):
-    """A valid file shows its absolute path and every cell, including accents and ñ."""
+    """A valid file shows its absolute path and every cell, including accents and ñ.
+
+    Age stays a number, so the grid aligns that column to the right.
+    """
     source = request.getfixturevalue(fixture_name)
     path = tmp_path / "carpeta con espacios" / f"cañón{source.suffix}"
     path.parent.mkdir()
@@ -47,8 +53,67 @@ def test_show_dataset_displays_the_file(request, tmp_path, fixture_name):
     assert window.path_text.text == str(path.resolve())
     assert "cañón" in window.path_text.text
     assert window.status_text.text == ""
-    assert tuple(column.title for column in window.dataset_grid.columns) == ("name", "age")
-    assert [row.cells for row in window.dataset_grid.rows] == [("José", "19"), ("Begoña", "21")]
+    assert [(column.title, column.kind, column.align) for column in window.dataset_grid.columns] == [
+        ("name", "text", "left"),
+        ("age", "number", "right"),
+    ]
+    assert [row.cells for row in window.dataset_grid.rows] == [("José", 19), ("Begoña", 21)]
+
+
+def test_grid_records_right_aligns_real_numbers():
+    """Integers and real floats become number columns. Text, booleans, dates, and mixed values stay text."""
+    frame = DataFrame(
+        {
+            "name": ["Ana", None],
+            "age": [19, 21],
+            "price": [1.5, float("nan")],
+            "limit": [float("inf"), float("-inf")],
+            "ok": [True, False],
+            "when": [datetime(2020, 1, 2), None],
+            "mixed": [3, "x"],
+        }
+    )
+    frame["count"] = Series([4, NA], dtype="Int64")
+    frame["raw"] = Series([np.int64(7), np.float32(1.25)], dtype=object)
+
+    columns, rows = grid_records(frame)
+    _window().dataset_grid.set_data(columns=columns, rows=rows)
+
+    assert [(column.title, column.kind, column.align) for column in columns] == [
+        ("name", "text", "left"),
+        ("age", "number", "right"),
+        ("price", "number", "right"),
+        ("limit", "number", "right"),
+        ("ok", "text", "left"),
+        ("when", "text", "left"),
+        ("mixed", "text", "left"),
+        ("count", "number", "right"),
+        ("raw", "number", "right"),
+    ]
+    assert rows[0].cells[0] == "Ana"
+    assert rows[1].cells[0] is None
+    assert rows[0].cells[1:5] == (19, 1.5, None, "True")
+    assert rows[1].cells[1] == 21
+    assert rows[1].cells[2] is None
+    assert rows[1].cells[3] is None
+    assert isinstance(rows[0].cells[5], str) and "2020-01-02" in rows[0].cells[5]
+    assert rows[1].cells[5] is None
+    assert rows[0].cells[6] == "3"
+    assert rows[1].cells[6] == "x"
+    assert rows[0].cells[7] == 4 and type(rows[0].cells[7]) is int
+    assert rows[1].cells[7] is None
+    assert rows[0].cells[8] == 7 and type(rows[0].cells[8]) is int
+    assert rows[1].cells[8] == float(np.float32(1.25)) and type(rows[1].cells[8]) is float
+
+
+def test_grid_records_keeps_duplicate_headers_apart():
+    """Two columns with the same header are still typed from their own values."""
+    frame = DataFrame([["Ana", 19], ["Bo", 21]], columns=["value", "value"])
+
+    columns, rows = grid_records(frame)
+
+    assert [column.kind for column in columns] == ["text", "number"]
+    assert [row.cells for row in rows] == [("Ana", 19), ("Bo", 21)]
 
 
 def test_failed_load_keeps_the_previous_dataset(example_csv, tmp_path):

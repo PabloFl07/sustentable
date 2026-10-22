@@ -8,9 +8,22 @@ from __future__ import annotations
 
 from math import isfinite
 from pathlib import Path
+from typing import Literal
 
-from pandas import DataFrame, isna
-from pysual import autoconfig, get_theme, App, Button, CapabilityError, ClickEvent, DataGrid, GridColumn, GridRow, TextBox
+from pandas import DataFrame, Series, isna
+from pandas.api.types import is_any_real_numeric_dtype, is_integer_dtype
+from pysual import (
+    App,
+    Button,
+    CapabilityError,
+    ClickEvent,
+    DataGrid,
+    GridColumn,
+    GridRow,
+    TextBox,
+    autoconfig,  # noqa: F401  (importing it applies pysual's environment defaults)
+    get_theme,
+)
 from pysual.errors import LifecycleError
 
 from sustentable.data_import import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
@@ -28,15 +41,44 @@ _MAX_CELL_LENGTH = 4096
 
 
 def grid_records(frame: DataFrame) -> tuple[tuple[GridColumn, ...], tuple[GridRow, ...]]:
-    """Return text columns and rows for ``frame``, using its column names as headers.
+    """Return columns and rows for ``frame``, using its column names as headers.
 
-    Missing values become empty cells. Every other value is shown with ``str``, so numpy numbers and dates fit the grid.
+    A column of integers or real floats is ``kind="number"``, which is what makes the grid align it to the right.
+    Booleans, dates, text, and mixed columns stay text. Missing values become empty cells.
     """
-    columns = tuple(GridColumn(f"c{index}", _header(name)) for index, name in enumerate(frame.columns))
+    # iloc picks one column even when two headers share a name.
+    kinds = tuple(_column_kind(frame.iloc[:, index]) for index in range(frame.shape[1]))
+    columns = tuple(
+        GridColumn(f"c{index}", _header(name), kind=kind) for index, (name, kind) in enumerate(zip(frame.columns, kinds, strict=True))
+    )
     rows = tuple(
-        GridRow(str(index), tuple(_cell_text(value) for value in row)) for index, row in enumerate(frame.itertuples(index=False, name=None))
+        GridRow(str(index), tuple(_cell(kind, value) for kind, value in zip(kinds, row, strict=True)))
+        for index, row in enumerate(frame.itertuples(index=False, name=None))
     )
     return columns, rows
+
+
+def _column_kind(column: Series) -> Literal["text", "number"]:
+    """Return ``number`` when every present value is an integer or a real float, and ``text`` otherwise."""
+    if _is_number_dtype(column.dtype):
+        return "number"
+    found = False
+    for value in column:
+        if _missing(value):
+            continue
+        if not _is_number_dtype(type(value)):
+            return "text"
+        found = True
+    # A column with nothing in it has no numbers to align.
+    return "number" if found else "text"
+
+
+def _is_number_dtype(dtype: object) -> bool:
+    """Return whether ``dtype`` is an integer or real-float dtype, including numpy scalars.
+
+    A number cell only accepts ``int`` and ``float``, so booleans and complex values stay out.
+    """
+    return is_any_real_numeric_dtype(dtype)
 
 
 def _header(name: object) -> str:
@@ -44,16 +86,40 @@ def _header(name: object) -> str:
     return " ".join(str(name).split())
 
 
-def _cell_text(value: object) -> str | None:
-    """Return the text of one cell, or ``None`` when the value is missing."""
-    if value is None or (isinstance(value, float) and not isfinite(value)):
+def _cell(kind: Literal["text", "number"], value: object) -> str | int | float | None:
+    """Return one grid cell. Missing values are ``None``, and numbers are Python ``int`` or ``float``."""
+    if _missing(value):
         return None
+    if kind == "number":
+        return _number(value)
+    return _text(value)
+
+
+def _missing(value: object) -> bool:
+    """Return whether ``value`` is missing or is a non-finite float."""
+    if value is None or (isinstance(value, float) and not isfinite(value)):
+        return True
     try:
         missing = isna(value)
     except TypeError, ValueError:
-        missing = False
-    if missing is True:
+        return False
+    return missing is True
+
+
+def _number(value: object) -> int | float | None:
+    """Return ``value`` as a Python ``int`` or ``float``. A non-finite float is missing."""
+    if not _is_number_dtype(type(value)):
+        raise TypeError(f"Cannot show {value!r} as a number.")
+    if is_integer_dtype(type(value)):
+        return int(value)
+    number = float(value)
+    if not isfinite(number):
         return None
+    return number
+
+
+def _text(value: object) -> str:
+    """Return the text of one cell, rejecting text the grid cannot store."""
     text = str(value)
     if len(text) > _MAX_CELL_LENGTH:
         raise ValueError(f"A value is longer than {_MAX_CELL_LENGTH} characters and cannot be shown.")
