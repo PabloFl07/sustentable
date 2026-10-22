@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from itertools import repeat
 from math import isfinite
 from typing import Literal
@@ -36,6 +37,15 @@ class PandaGrid(DataGrid):
         other values become text. Pysual's data-size and cell-length limits apply, without truncating data.
         """
         columns, rows = _grid_records(dataframe)
+        self.set_data(columns=columns, rows=rows)
+
+    async def load_dataframe_async(self, dataframe: DataFrame) -> None:
+        """Prepare a display snapshot in a worker and publish it on the UI thread.
+
+        Use this from async event handlers to keep the UI responsive during conversion. Conversion or validation
+        failures leave the previous grid unchanged; cancelling the wait discards the worker's eventual result.
+        """
+        columns, rows = await asyncio.to_thread(_grid_records, dataframe)
         self.set_data(columns=columns, rows=rows)
 
 

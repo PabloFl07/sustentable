@@ -1,6 +1,8 @@
 """Tests for converting dataframes into a reusable, atomic grid snapshot."""
 
+import asyncio
 from datetime import datetime
+from threading import Event
 
 import numpy as np
 import pytest
@@ -8,6 +10,7 @@ from pandas import NA, DataFrame, NaT, Series
 from pandas.testing import assert_frame_equal
 from pysual import DataGrid, GridColumn, GridRow
 
+from sustentable import panda_grid
 from sustentable.panda_grid import PandaGrid
 
 
@@ -223,3 +226,123 @@ def test_text_at_the_native_length_limit_is_preserved() -> None:
     grid = PandaGrid(DataFrame({"text": [text]}))
 
     assert grid.rows[0].cells == (text,)
+
+
+def test_async_conversion_leaves_grid_controls_responsive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preparation runs outside the UI owner, while the old snapshot remains usable until replacement."""
+    grid = PandaGrid(DataFrame({"age": [19, 21]}))
+    previous_columns, previous_rows = grid.columns, grid.rows
+    replacement = DataFrame({"score": [1.5]})
+    started, release, finished = Event(), Event(), Event()
+    convert = panda_grid._grid_records
+
+    def blocked_conversion(frame: DataFrame) -> tuple[tuple[GridColumn, ...], tuple[GridRow, ...]]:
+        started.set()
+        try:
+            assert release.wait(5), "The test did not release grid conversion."
+            return convert(frame)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(panda_grid, "_grid_records", blocked_conversion)
+
+    async def exercise() -> None:
+        pending = asyncio.create_task(grid.load_dataframe_async(replacement))
+        try:
+            assert await asyncio.to_thread(started.wait, 5), "Grid conversion did not start."
+            # Changing selection must reach Pysual's UI owner before conversion can finish.
+            grid.selected_key = "1"
+            assert grid.selected_key == "1"
+            assert not finished.is_set()
+            assert grid.columns == previous_columns
+            assert grid.rows == previous_rows
+            release.set()
+            await asyncio.wait_for(pending, 5)
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            if started.is_set():
+                assert await asyncio.to_thread(finished.wait, 5)
+
+    asyncio.run(exercise())
+
+    assert [column.title for column in grid.columns] == ["score"]
+    assert [row.cells for row in grid.rows] == [(1.5,)]
+
+
+@pytest.mark.parametrize("invalid_frame", [DataFrame({"text": ["x" * 4097]}), DataFrame({"value": ["valid", _BrokenText()]})])
+def test_async_conversion_or_validation_failure_keeps_previous_data(invalid_frame: DataFrame) -> None:
+    """Failures from both worker conversion and UI validation propagate without replacing the table."""
+    grid = PandaGrid(DataFrame({"age": [19, 21]}))
+    grid.update(selected_key="1", selected_column=0, sort_key="c0", sort_descending=True)
+    previous_columns, previous_rows = grid.columns, grid.rows
+
+    with pytest.raises(ValueError):
+        asyncio.run(grid.load_dataframe_async(invalid_frame))
+
+    assert grid.columns == previous_columns
+    assert grid.rows == previous_rows
+    assert grid.selected_key == "1"
+    assert grid.sort_key == "c0"
+    assert grid.sort_descending
+
+
+def test_cancelled_async_conversion_cannot_overwrite_a_newer_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cancelled conversion may finish in its worker, but its result is never committed."""
+    cancelled_frame = DataFrame({"stale": [99]})
+    replacement_frame = DataFrame({"current": [42]})
+    cancelled_complete = Event()
+
+    class _ObservedGrid(PandaGrid):
+        """Signal when cancellation has actually finished on Pysual's UI owner."""
+
+        async def load_dataframe_async(self, frame: DataFrame) -> None:
+            """Observe completion after the real async grid loader has returned."""
+            try:
+                await super().load_dataframe_async(frame)
+            finally:
+                if frame is cancelled_frame:
+                    cancelled_complete.set()
+
+    grid = _ObservedGrid(DataFrame({"old": [1]}))
+    started, release, finished = Event(), Event(), Event()
+    convert = panda_grid._grid_records
+
+    def controlled_conversion(frame: DataFrame) -> tuple[tuple[GridColumn, ...], tuple[GridRow, ...]]:
+        if frame is not cancelled_frame:
+            return convert(frame)
+        started.set()
+        try:
+            assert release.wait(5), "The test did not release the cancelled conversion."
+            return convert(frame)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(panda_grid, "_grid_records", controlled_conversion)
+
+    async def exercise() -> None:
+        pending = asyncio.create_task(grid.load_dataframe_async(cancelled_frame))
+        try:
+            assert await asyncio.to_thread(started.wait, 5), "Grid conversion did not start."
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert await asyncio.to_thread(cancelled_complete.wait, 5), "The cancelled UI conversion did not finish."
+            assert [row.cells for row in grid.rows] == [(1,)]
+            grid.load_dataframe(replacement_frame)
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 5), "The cancelled conversion did not finish."
+        finally:
+            release.set()
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            if started.is_set():
+                assert await asyncio.to_thread(finished.wait, 5)
+
+    asyncio.run(exercise())
+
+    assert [column.title for column in grid.columns] == ["current"]
+    assert [row.cells for row in grid.rows] == [(42,)]
