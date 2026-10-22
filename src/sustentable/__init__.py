@@ -1,2 +1,5 @@
 def main() -> None:
-    print("Hello from sustentable!")
+    """Open the dataset window and wait until it closes."""
+    from sustentable.dataset_window import main as open_dataset_window
+
+    open_dataset_window()
