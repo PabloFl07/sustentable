@@ -10,8 +10,8 @@ from pandas import NA, DataFrame, NaT, Series
 from pandas.testing import assert_frame_equal
 from pysual import DataGrid, GridColumn, GridRow
 
-from sustentable import panda_grid
-from sustentable.panda_grid import PandaGrid
+from sustentable.gui.controls import panda_grid
+from sustentable.gui.controls.panda_grid import PandaGrid
 
 
 class _BrokenText:

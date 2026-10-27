@@ -1,6 +1,6 @@
 """Window that loads a dataset and displays it in a PandaGrid.
 
-Reading stays in ``sustentable.data_import`` and DataFrame display stays in ``sustentable.panda_grid``.
+Reading stays in ``sustentable.dataset.readers`` and DataFrame display stays in ``sustentable.gui.controls.panda_grid``.
 ``dataset`` on the window is the last frame loaded successfully, ready for the following steps.
 """
 
@@ -24,11 +24,11 @@ from pysual import (
 )
 from pysual.errors import LifecycleError
 
-from sustentable.data_import import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
-from sustentable.error_dialog import ErrorDialog
-from sustentable.exceptions import DataImportError
-from sustentable.loading_spinner import LoadingSpinner
-from sustentable.panda_grid import PandaGrid
+from sustentable.data.exceptions import DataImportError
+from sustentable.data.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.gui.controls.loading_spinner import LoadingSpinner
+from sustentable.gui.controls.panda_grid import PandaGrid
+from sustentable.gui.error_dialog import ErrorDialog
 
 # Same suffixes the import module accepts, including the ones US-14 lists. .sqlite3 is here because SQLiteFileCheck reads it.
 DATASET_EXTENSIONS: tuple[str, ...] = (

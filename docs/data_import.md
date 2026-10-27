@@ -1,6 +1,6 @@
 # Data import module
 
-`sustentable.data_import` is the module in charge of loading the data that the regression models are built from. The user points the application to a file, and the module decides how to read it, checks that it is usable and returns its contents. Three formats are supported for now: CSV (`.csv`), Excel (`.xlsx` and `.xls`) and SQLite databases (`.db`, `.sqlite` and `.sqlite3`). Extensions are compared without regard to case, so a file called `DATA.CSV` is treated exactly like `data.csv`.
+`sustentable.dataset.readers` is the module in charge of loading the data that the regression models are built from. The user points the application to a file, and the module decides how to read it, checks that it is usable and returns its contents. Three formats are supported for now: CSV (`.csv`), Excel (`.xlsx` and `.xls`) and SQLite databases (`.db`, `.sqlite` and `.sqlite3`). Extensions are compared without regard to case, so a file called `DATA.CSV` is treated exactly like `data.csv`.
 
 > The module is still a skeleton and cannot read any file yet. See [Current status](#current-status) before relying on it.
 
@@ -9,7 +9,7 @@
 Most callers only need two lines. `get_reader()` picks the right reader from the file extension, and `read()` validates the file and loads it:
 
 ```python
-from sustentable.data_import import get_reader
+from sustentable.dataset.readers import get_reader
 
 reader = get_reader("data/emissions.csv")
 data = reader.read()
@@ -43,7 +43,7 @@ The checks can be used directly, which is handy in tests:
 ```python
 from pathlib import Path
 
-from sustentable.data_import import CSVFileCheck
+from sustentable.dataset.readers import CSVFileCheck
 
 check = CSVFileCheck(Path("data/emissions.xlsx"))
 check.exists()  # passes if the file is there
@@ -55,7 +55,7 @@ check.supported_extension()  # ValueError: Extension '.xlsx' is not supported. S
 `Reader` is the base class for every reader. It is created with the path of the file, which can be passed as a `str` or a `Path` and is always stored as a `Path`. Any other type raises `TypeError`. The path can be changed later on the same instance, and the `file_check` property builds a new check on every access, so the reader never validates a path it no longer points to:
 
 ```python
-from sustentable.data_import import CSVReader
+from sustentable.dataset.readers import CSVReader
 
 reader = CSVReader("data/2024.csv")
 reader.file_path = "data/2025.csv"
@@ -74,7 +74,7 @@ A concrete reader therefore only has to implement two methods. `_get_file_check(
 
 ```python
 >>> get_reader("data/emissions.sqlite")
-<sustentable.data_import.SQLiteReader object at 0x...>
+<sustentable.dataset.readers.SQLiteReader object at 0x...>
 >>> get_reader("data/emissions.json")
 ValueError: Extension '.json' is not supported.
 ```
@@ -86,7 +86,7 @@ When the user types a path in the interface, it arrives as a plain `str`. That s
 Every failure along the way is reported through an exception whose message is written for the user, so the interface does not need to know which check failed. It only has to catch the exceptions, show the message and let the user fix the path or the file and try again:
 
 ```python
-from sustentable.data_import import get_reader
+from sustentable.dataset.readers import get_reader
 
 
 def load_from_user_input(path: str):

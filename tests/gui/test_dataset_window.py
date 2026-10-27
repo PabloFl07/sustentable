@@ -15,13 +15,13 @@ from pandas import DataFrame
 from pysual import CapabilityError, ClickEvent, GridColumn, GridRow
 from pysual.errors import LifecycleError
 
-from sustentable import panda_grid
-from sustentable.data_import import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
-from sustentable.dataset_window import DATASET_EXTENSIONS, DatasetWindow
-from sustentable.error_dialog import ErrorDialog
-from sustentable.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
-from sustentable.loading_spinner import LoadingSpinner
-from sustentable.panda_grid import PandaGrid
+from sustentable.data.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
+from sustentable.data.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.gui.controls import panda_grid
+from sustentable.gui.controls.loading_spinner import LoadingSpinner
+from sustentable.gui.controls.panda_grid import PandaGrid
+from sustentable.gui.dataset_window import DATASET_EXTENSIONS, DatasetWindow
+from sustentable.gui.error_dialog import ErrorDialog
 
 
 @dataclass
@@ -51,7 +51,7 @@ def spinner_activity(monkeypatch: pytest.MonkeyPatch) -> _SpinnerActivity:
             finally:
                 activity.completed.set()
 
-    monkeypatch.setattr("sustentable.dataset_window.LoadingSpinner", _ObservedSpinner)
+    monkeypatch.setattr("sustentable.gui.dataset_window.LoadingSpinner", _ObservedSpinner)
     return activity
 
 
@@ -204,7 +204,7 @@ def test_filesystem_error_is_reported_without_losing_data(example_csv: Path, mon
     previous_columns, previous_rows = window.dataset_grid.columns, window.dataset_grid.rows
     reader = Mock()
     reader.read.side_effect = OSError("The file became unavailable.")
-    monkeypatch.setattr("sustentable.dataset_window.get_reader", Mock(return_value=reader))
+    monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", Mock(return_value=reader))
 
     asyncio.run(window.show_dataset(example_csv))
 
@@ -224,7 +224,7 @@ def test_cancelled_dialog_preserves_the_entire_state(example_csv: Path, monkeypa
     dialog = AsyncMock(return_value=None)
     reader = Mock()
     monkeypatch.setattr(DatasetWindow, "choose_path", dialog)
-    monkeypatch.setattr("sustentable.dataset_window.get_reader", reader)
+    monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", reader)
 
     asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
 
@@ -271,7 +271,7 @@ def test_dialog_error_preserves_data_and_allows_another_browse(
     dialog = AsyncMock(side_effect=[error, replacement])
     reader = Mock(wraps=get_reader)
     monkeypatch.setattr(DatasetWindow, "choose_path", dialog)
-    monkeypatch.setattr("sustentable.dataset_window.get_reader", reader)
+    monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", reader)
 
     asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
 
@@ -328,7 +328,7 @@ def test_closed_window_during_dialog_preserves_data_without_an_error(
     previous_columns, previous_rows = window.dataset_grid.columns, window.dataset_grid.rows
     reader = Mock()
     monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(side_effect=LifecycleError("The owner was closed.")))
-    monkeypatch.setattr("sustentable.dataset_window.get_reader", reader)
+    monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", reader)
 
     asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
 
@@ -370,7 +370,7 @@ def test_pending_load_keeps_controls_responsive_and_ignores_overlaps(
         finally:
             finished.set()
 
-    monkeypatch.setattr("sustentable.dataset_window._read_dataset", blocked_read)
+    monkeypatch.setattr("sustentable.gui.dataset_window._read_dataset", blocked_read)
 
     async def exercise() -> None:
         pending = asyncio.create_task(window.show_dataset(replacement))
@@ -461,7 +461,7 @@ def test_cancelled_load_restores_controls_and_cannot_commit_late_results(
         finally:
             finished.set()
 
-    monkeypatch.setattr("sustentable.dataset_window._read_dataset", controlled_read)
+    monkeypatch.setattr("sustentable.gui.dataset_window._read_dataset", controlled_read)
 
     async def exercise() -> None:
         pending = asyncio.create_task(window.show_dataset(cancelled_path))
@@ -530,7 +530,7 @@ def test_spinner_advances_during_reading_and_conversion_and_restarts_for_next_lo
         finally:
             conversion_finished.set()
 
-    monkeypatch.setattr("sustentable.dataset_window._read_dataset", blocked_read)
+    monkeypatch.setattr("sustentable.gui.dataset_window._read_dataset", blocked_read)
     monkeypatch.setattr(panda_grid, "_grid_records", blocked_conversion)
 
     async def exercise() -> None:
