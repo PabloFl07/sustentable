@@ -7,8 +7,6 @@ from __future__ import annotations
 
 from pysual import (
     App,
-    autoconfig,
-    get_theme,
     Button,
     CapabilityError,
     ClickEvent,
@@ -18,6 +16,7 @@ from pysual import (
     GridRow,
     Label,
     TextBox,
+    get_theme,
 )
 
 _COLUMNS: tuple[GridColumn, ...] = (
@@ -81,6 +80,7 @@ def main() -> None:
     ui = GuiPrototype()
     ui.theme = get_theme("macos")
     ui.run_blocking()
+
 
 if __name__ == "__main__":
     main()
