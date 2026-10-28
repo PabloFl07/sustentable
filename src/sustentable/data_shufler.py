@@ -1,14 +1,43 @@
 import pandas as pd
 
-def data_shufler(frame:pd.DataFrame, seed:int, test_percent:int):
 
-    frame = frame.copy()
+def data_shuffler(frame:pd.DataFrame, seed:int, test_percent:float) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Shuffle a DataFrame and split it into train and test sets.
 
-    frame.sample(frac=1, random_state=seed).reset_index(drop=True)
+    Parameters
+    ----------
+    frame : pd.DataFrame
+        Original DataFrame.
+    seed : int
+        Random seed for reproducibility.
+    test_percent : float
+        Fraction of rows assigned to the test set, between 0 and 1.
 
-    test_percent = round(len(frame)*test_percent, 0)
+    Returns
+    -------
+    df_test : pd.DataFrame
+        Test subset.
+    df_train : pd.DataFrame
+        Training subset.
+    """
+    if not 0 <= test_percent <= 1:
+        raise ValueError("test_percent must be between 0 and 1.")
+    elif type(frame) is not pd.DataFrame:
+        raise TypeError('frame must be a Pandas Dataframe')
+    elif type(test_percent) is not float:
+        raise TypeError('test_percent must be a float')
+    elif type(seed) is not int:
+        raise TypeError('seed must be a int')
 
-    df_test = frame.iloc[test_percent:].copy()
-    df_train = frame.iloc[:test_percent].copy()
+    frame = frame.sample(
+        frac=1,
+        random_state=seed
+    ).reset_index(drop=True)
+
+    n_test = round(len(frame) * test_percent)
+
+    df_test = frame.iloc[:n_test].copy()
+    df_train = frame.iloc[n_test:].copy()
 
     return df_test, df_train
