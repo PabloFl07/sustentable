@@ -15,8 +15,8 @@ from pandas import DataFrame
 from pysual import CapabilityError, ClickEvent, GridColumn, GridRow
 from pysual.errors import LifecycleError
 
-from sustentable.data.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
-from sustentable.data.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.core.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
+from sustentable.core.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
 from sustentable.gui.controls import panda_grid
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
@@ -113,6 +113,30 @@ def test_show_dataset_displays_the_file(request: pytest.FixtureRequest, tmp_path
         ("age", "number", "right"),
     ]
     assert [row.cells for row in window.dataset_grid.rows] == [("José", 19), ("Begoña", 21)]
+
+
+def test_column_panel_opens_once_a_dataset_loads(example_csv: Path, show_error_dialog: Mock) -> None:
+    """Before any dataset neither the panel nor its reopen button shows; a load opens the panel with the columns."""
+    window = _window()
+    assert not window.column_sidebar.visible
+    assert not window.show_sidebar.visible
+
+    asyncio.run(window.show_dataset(example_csv))
+
+    assert window.column_sidebar.visible
+    assert not window.show_sidebar.visible
+    assert [check.text for check in window.column_sidebar._inputs] == ["name", "age"]
+
+
+def test_failed_first_load_keeps_the_column_panel_closed(tmp_path: Path, show_error_dialog: Mock) -> None:
+    """A load that fails before any dataset leaves the panel and its reopen button hidden."""
+    window = _window()
+
+    asyncio.run(window.show_dataset(tmp_path / "missing.csv"))
+
+    show_error_dialog.assert_called_once()
+    assert not window.column_sidebar.visible
+    assert not window.show_sidebar.visible
 
 
 def test_failed_load_keeps_the_previous_dataset(example_csv: Path, tmp_path: Path, show_error_dialog: Mock) -> None:
