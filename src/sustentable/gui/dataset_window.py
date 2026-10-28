@@ -1,12 +1,12 @@
-"""Window that loads a dataset and displays it in a PandaGrid.
+"""Window that loads a dataset, displays it in a PandaGrid, and lets the user pick the regression columns.
 
-Reading stays in ``sustentable.dataset.readers`` and DataFrame display stays in ``sustentable.gui.controls.panda_grid``.
-``dataset`` on the window is the last frame loaded successfully, ready for the following steps.
+Reading stays in ``sustentable.core.readers``, DataFrame display stays in ``sustentable.gui.controls.panda_grid``,
+and column selection stays in ``sustentable.gui.column_sidebar``.
+``dataset`` on the window is the last frame loaded successfully, and ``selection`` the last confirmed columns.
 """
 
-from __future__ import annotations
-
 import asyncio
+from collections.abc import Hashable
 from contextlib import suppress
 from pathlib import Path
 
@@ -24,10 +24,12 @@ from pysual import (
 )
 from pysual.errors import LifecycleError
 
-from sustentable.data.exceptions import DataImportError
-from sustentable.data.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.core.exceptions import DataImportError
+from sustentable.core.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.gui.column_sidebar import ColumnSidebar
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
+from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
 from sustentable.gui.error_dialog import ErrorDialog
 
 # Same suffixes the import module accepts, including the ones US-14 lists. .sqlite3 is here because SQLiteFileCheck reads it.
@@ -39,19 +41,26 @@ DATASET_EXTENSIONS: tuple[str, ...] = (
 
 
 class DatasetWindow(App):
-    """Dataset browser. ``dataset`` is the last frame loaded, or ``None`` when nothing has loaded."""
+    """Dataset browser with a column side panel.
+
+    ``dataset`` is the last frame loaded, or ``None`` when nothing has loaded. ``selection`` is the last confirmed
+    (input columns, output column) pair for that frame, or ``None`` until the user confirms one.
+    """
 
     dataset: DataFrame | None
+    selection: tuple[list[Hashable], Hashable] | None
 
     def build(self) -> None:
-        """Create the path toolbar, scrolling table, and reusable modal error dialog."""
+        """Create the path toolbar, the column side panel next to the scrolling table, and the reusable error dialog."""
         self.title = "Sustentable"
-        self.width = 960
-        self.height = 640
+        self.width = 1280
+        self.height = 720
         self.layout = "stack"
         self.padding = 16
         self.spacing = 12
+        self.theme = with_sidebar_button(self.theme)
         self.dataset = None
+        self.selection = None
         self._loading = False
         self.path_row = Container(layout="stack", direction="horizontal", spacing=12, height=36)
         self.path_label = Label(parent=self.path_row, text="Dataset path")
@@ -60,8 +69,34 @@ class DatasetWindow(App):
         self.loading_row = Container(layout="stack", direction="horizontal", spacing=8, height=24, visible=False)
         self.loading_spinner = LoadingSpinner(parent=self.loading_row, width=24, height=24)
         self.loading_label = Label(parent=self.loading_row, text="Loading dataset…", flex=1)
-        self.dataset_grid = PandaGrid(flex=1, min_height=240)
+        self.body = Container(layout="stack", direction="horizontal", flex=1, spacing=12)
+        self.column_sidebar = ColumnSidebar(parent=self.body, tokens=self.theme.tokens, visible=False)
+        self.content = Container(parent=self.body, layout="stack", flex=1, spacing=8)
+        self.show_sidebar = SidebarButton(parent=self.content, icon="menu", width=28, height=28, tooltip="Show panel", visible=False)
+        self.dataset_grid = PandaGrid(parent=self.content, flex=1, min_height=240)
         self.error_dialog = ErrorDialog(title="Unable to open dataset")
+        self.column_sidebar.hide_panel.click.connect(self.hide_column_sidebar)
+        self.column_sidebar.confirm.click.connect(self.confirm_selection)
+
+    def hide_column_sidebar(self, event: ClickEvent) -> None:
+        """Collapse the column panel so the table takes the whole width."""
+        self._set_sidebar_visible(False)
+
+    def show_sidebar_on_click(self, event: ClickEvent) -> None:
+        """Bring the column panel back."""
+        self._set_sidebar_visible(True)
+
+    def _set_sidebar_visible(self, visible: bool) -> None:
+        """Show either the column panel or the button that reopens it, never both."""
+        self.column_sidebar.visible = visible
+        self.show_sidebar.visible = not visible
+
+    def confirm_selection(self, event: ClickEvent) -> None:
+        """Keep the chosen columns in ``selection`` for the regression step."""
+        inputs, output = self.column_sidebar.selection
+        if not inputs or output is None:
+            return
+        self.selection = (inputs, output)
 
     async def open_dataset_on_click(self, event: ClickEvent) -> None:
         """Ask for a dataset file. Cancelling leaves the path, the table, and ``dataset`` as they were."""
@@ -93,8 +128,11 @@ class DatasetWindow(App):
             animation = asyncio.create_task(self.loading_spinner.animate())
             absolute_path, frame = await asyncio.to_thread(_read_dataset, path)
             await self.dataset_grid.load_dataframe_async(frame)
+            self.column_sidebar.load_columns(frame.columns)
             self.dataset = frame
+            self.selection = None
             self.path_text.text = absolute_path
+            self._set_sidebar_visible(True)
         except (DataImportError, OSError, TypeError, ValueError) as error:
             self.error_dialog.show_error(str(error))
         finally:
