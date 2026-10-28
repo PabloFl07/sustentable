@@ -6,7 +6,7 @@ parsing, so it is the one that turns the errors of its library into ``CorruptedF
 
 ``Reader.validate()`` runs the checks that need no parsing (the path exists, is a readable, non-empty file and has a
 supported extension). ``Reader.read()`` runs them, parses the file once and checks that the result has data. Every
-error derives from ``DataImportError`` (see ``sustentable.dataset.exceptions``).
+error derives from ``DataImportError`` (see ``sustentable.core.exceptions``).
 """
 
 import sqlite3 as sql

@@ -1,7 +1,5 @@
 """A Pysual data grid that displays pandas DataFrames as typed, read-only cells."""
 
-from __future__ import annotations
-
 import asyncio
 from itertools import repeat
 from math import isfinite
