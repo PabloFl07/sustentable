@@ -193,5 +193,5 @@ def _read_dataset(path: str | Path) -> tuple[str, DataFrame]:
 def main() -> None:
     """Open the dataset window and wait until it closes."""
     ui = DatasetWindow()
-    ui.theme = get_theme("macos")
+    ui.theme = get_theme("modern_dark")
     ui.run_blocking()
