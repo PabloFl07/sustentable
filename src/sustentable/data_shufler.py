@@ -21,12 +21,12 @@ def data_shuffler(frame:pd.DataFrame, seed:int, test_percent:float) -> tuple[pd.
     df_train : pd.DataFrame
         Training subset.
     """
-    if not 0 <= test_percent <= 1:
-        raise ValueError("test_percent must be between 0 and 1.")
+    if type(test_percent) is not float:
+        raise TypeError('test_percent must be a float')
     elif type(frame) is not pd.DataFrame:
         raise TypeError('frame must be a Pandas Dataframe')
-    elif type(test_percent) is not float:
-        raise TypeError('test_percent must be a float')
+    elif not 0 <= test_percent <= 1:
+        raise ValueError("test_percent must be between 0 and 1.")
     elif type(seed) is not int:
         raise TypeError('seed must be a int')
 
