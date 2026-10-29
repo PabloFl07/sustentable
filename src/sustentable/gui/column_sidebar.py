@@ -24,7 +24,7 @@ class ColumnSidebar(ScrollArea):
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
         """Create the panel colored with the window theme's ``tokens``; it starts with no columns."""
-        defaults: dict[str, object] = {"layout": "stack", "width": 380, "padding": 12, "spacing": 6, "background": tokens.surface}
+        defaults: dict[str, object] = {"layout": "stack", "width": 280, "padding": 8, "spacing": 6, "background": tokens.surface}
         defaults.update(properties)
         super().__init__(**defaults)
         self._background = tokens.surface
@@ -38,27 +38,27 @@ class ColumnSidebar(ScrollArea):
         background = self._background
 
         self.header = Container(parent=self, layout="stack", direction="horizontal", height=28)
-        Label(parent=self.header, text="COLUMNS", font_size=24, flex=1, background=background)
+        Label(parent=self.header, text="COLUMNS", font_size=18, flex=1, background=background)
         self.hide_panel = SidebarButton(parent=self.header, icon="chevron_left", width=28, height=28, tooltip="Hide panel")
 
-        Label(parent=self, text="Input (X)", height=22, font_size=20, background=background)
+        Label(parent=self, text="Input (X)", height=22, font_size=16, background=background)
         self.input_group = Container(parent=self, layout="stack", spacing=4)
-        Label(parent=self, text="Output (Y)", height=22, font_size=20, background=background)
+        Label(parent=self, text="Output (Y)", height=22, font_size=16, background=background)
         self.output_group = Container(parent=self, layout="stack", spacing=4)
 
         # Mode header (outside the box)
-        self.mode = Label(parent=self, text="", height=24, font_size=20, background=background)
+        self.mode = Label(parent=self, text="", height=24, font_size=16, background=background)
         # Box summarizing the selection: the Y column, the X columns as chips, and the formula
         box = tokens.raised
-        self.formula_box = Container(parent=self, layout="stack", padding=16, spacing=6, background=box)
-        Label(parent=self.formula_box, text="OUTPUT (Y)", height=18, font_size=13, foreground=tokens.muted, background=box)
+        self.formula_box = Container(parent=self, layout="stack", padding=10, spacing=6, background=box)
+        Label(parent=self.formula_box, text="OUTPUT (Y)", height=18, font_size=11, foreground=tokens.muted, background=box)
         self.output_chips = Container(parent=self.formula_box, layout="flow", direction="horizontal", spacing=6)
         self.input_caption = Label(parent=self.formula_box, text="INPUTS (X)", height=18, font_size=13, foreground=tokens.muted, background=box)
         self.input_chips = Container(parent=self.formula_box, layout="flow", direction="horizontal", spacing=6)
         Container(parent=self.formula_box, height=1, background=tokens.border)
-        self.formula = Label(parent=self.formula_box, text="", font_size=15, word_wrap=True, foreground=tokens.muted, background=box)
+        self.formula = Label(parent=self.formula_box, text="", font_size=13, word_wrap=True, foreground=tokens.muted, background=box)
 
-        self.confirm = Button(parent=self, text="Confirm selection", icon="check", height=36, enabled=False)
+        self.confirm = Button(parent=self, text="Confirm selection", icon="check", height=30, enabled=False)
         self._refresh_mode()
 
     def load_columns(self, columns: Iterable[Hashable]) -> None:
@@ -71,12 +71,12 @@ class ColumnSidebar(ScrollArea):
         self._outputs = []
 
         for text in self._texts:
-            check = CheckBox(parent=self.input_group, text=text, height=30, background=self._background, font_size=18)
+            check = CheckBox(parent=self.input_group, text=text, height=24, background=self._background, font_size=14)
             check.changed.connect(self._on_selection)
             self._inputs.append(check)
 
             radio = RadioButton(
-                parent=self.output_group, text=text, group=self._output_group_name, height=30, background=self._background, font_size=18
+                parent=self.output_group, text=text, group=self._output_group_name, height=24, background=self._background, font_size=14
             )
             radio.changed.connect(self._on_selection)
             self._outputs.append(radio)
@@ -162,8 +162,8 @@ class ColumnSidebar(ScrollArea):
             fill = self._tokens.surface
             text_color = self._tokens.foreground
         for text in texts:
-            chip = Container(parent=holder, layout="stack", padding=6, background=fill)
-            Label(parent=chip, text=text, font_size=16, foreground=text_color, background=fill)
+            chip = Container(parent=holder, layout="stack", padding=4, background=fill)
+            Label(parent=chip, text=text, font_size=13, foreground=text_color, background=fill)
 
 
 def _distinct_texts(columns: list[Hashable]) -> list[str]:
