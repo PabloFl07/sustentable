@@ -15,9 +15,11 @@ from pysual import (
     App,
     Button,
     CapabilityError,
+    ChangeEvent,
     ClickEvent,
     Container,
     Label,
+    Slider,
     TextBox,
     autoconfig,  # noqa: F401  (importing it applies pysual's environment defaults)
     get_theme,
@@ -27,6 +29,7 @@ from pysual.errors import LifecycleError
 from sustentable.core.exceptions import DataImportError
 from sustentable.core.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
 from sustentable.gui.column_sidebar import ColumnSidebar
+from sustentable.gui.controls.data_shuffler_slider import TrainTestSliderController
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
@@ -72,6 +75,14 @@ class DatasetWindow(App):
         self.body = Container(layout="stack", direction="horizontal", flex=1, spacing=12)
         self.column_sidebar = ColumnSidebar(parent=self.body, tokens=self.theme.tokens, visible=False)
         self.content = Container(parent=self.body, layout="stack", flex=1, spacing=8)
+
+        self.slider_row = Container(parent=self.content, layout="stack", direction="horizontal", spacing=12, height=36, visible=False)
+        self.slider_label = Label(parent=self.slider_row, text="Train: 80.0% | Test: 20.0%", width=200)
+        self.split_slider = Slider(parent=self.slider_row, minimum=0, maximum=100, value=20.0, flex=1)
+        self.split_slider.changed.connect(self.on_slider_changed)
+        self.confirm_split_btn = Button(parent=self.slider_row, text="Confirm", width=100)
+        self.confirm_split_btn.click.connect(self.on_confirm_split)
+
         self.show_sidebar = SidebarButton(parent=self.content, icon="menu", width=28, height=28, tooltip="Show panel", visible=False)
         self.dataset_grid = PandaGrid(parent=self.content, flex=1, min_height=240)
         self.error_dialog = ErrorDialog(title="Unable to open dataset")
@@ -97,6 +108,26 @@ class DatasetWindow(App):
         if not inputs or output is None:
             return
         self.selection = (inputs, output)
+        self.slider_row.visible = True
+
+    def on_slider_changed(self, event: ChangeEvent[float]) -> None:
+        """Updates the data proportion when the user uses the slidebar."""
+        if hasattr(self, "split_controller"):
+            current_value = self.split_slider.value
+            train_pct, test_pct = self.split_controller.on_slider_move(current_value)
+            self.slider_label.text = f"Train: {train_pct:.1f}% | Test: {test_pct:.1f}%"
+            if hasattr(self, "confirm_split_btn"):
+                self.confirm_split_btn.text = "Confirm"
+                self.confirm_split_btn.enabled = True
+
+    def on_confirm_split(self, event: ClickEvent) -> None:
+        """Confirms the partition and saves the final subsets."""
+        if hasattr(self, "split_controller"):
+            train_df, test_df = self.split_controller.get_datasets()
+            self.train_data = train_df
+            self.test_data = test_df
+            self.confirm_split_btn.text = "Confirmed!"
+            self.confirm_split_btn.enabled = False
 
     async def open_dataset_on_click(self, event: ClickEvent) -> None:
         """Ask for a dataset file. Cancelling leaves the path, the table, and ``dataset`` as they were."""
@@ -131,6 +162,9 @@ class DatasetWindow(App):
             self.column_sidebar.load_columns(frame.columns)
             self.dataset = frame
             self.selection = None
+
+            self.split_controller = TrainTestSliderController(frame=self.dataset, initial_test_pct=self.split_slider.value)
+
             self.path_text.text = absolute_path
             self._set_sidebar_visible(True)
         except (DataImportError, OSError, TypeError, ValueError) as error:
