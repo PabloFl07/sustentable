@@ -4,7 +4,7 @@ from collections import Counter
 from collections.abc import Hashable, Iterable
 from itertools import count
 
-from pysual import Button, ChangeEvent, CheckBox, Container, Label, RadioButton, ScrollArea, Tokens
+from pysual import Button, ChangeEvent, CheckBox, ClickEvent, Container, Label, RadioButton, ScrollArea, Tokens
 
 from sustentable.gui.controls.sidebar_button import SidebarButton
 
@@ -59,7 +59,13 @@ class ColumnSidebar(ScrollArea):
         self.formula = Label(parent=self.formula_box, text="", font_size=13, word_wrap=True, foreground=tokens.muted, background=box)
 
         self.confirm = Button(parent=self, text="Confirm selection", icon="check", height=30, enabled=False)
+        self.confirm.click.connect(self._on_confirm_click)
         self._refresh_mode()
+
+    def _on_confirm_click(self, event: ClickEvent) -> None:
+        """Provide visual feedback when the selection is confirmed."""
+        self.confirm.text = "Confirmed!"
+        self.confirm.enabled = False
 
     def load_columns(self, columns: Iterable[Hashable]) -> None:
         """Replace the listed columns, clearing the previous selection."""
@@ -136,6 +142,7 @@ class ColumnSidebar(ScrollArea):
             self._show_chips(self.output_chips, [], primary=True)
             self._show_chips(self.input_chips, [], primary=False)
             self.formula_box.visible = False
+            self.confirm.text = "Confirm selection"
             self.confirm.enabled = False
             return
 
@@ -149,6 +156,7 @@ class ColumnSidebar(ScrollArea):
         self._show_chips(self.input_chips, input_texts, primary=False)
         self.formula.text = self._texts[output] + " ~ " + " + ".join(input_texts)
         self.formula_box.visible = True
+        self.confirm.text = "Confirm selection"
         self.confirm.enabled = True
 
     def _show_chips(self, holder: Container, texts: list[str], primary: bool) -> None:
