@@ -39,7 +39,7 @@ class ColumnSidebar(ScrollArea):
 
         self.header = Container(parent=self, layout="stack", direction="horizontal", height=28)
         Label(parent=self.header, text="COLUMNS", font_size=24, flex=1, background=background)
-        self.hide_panel = SidebarButton(parent=self.header, icon="close", width=28, height=28, tooltip="Hide panel")
+        self.hide_panel = SidebarButton(parent=self.header, icon="chevron_left", width=28, height=28, tooltip="Hide panel")
 
         Label(parent=self, text="Input (X)", height=22, font_size=20, background=background)
         self.input_group = Container(parent=self, layout="stack", spacing=4)
