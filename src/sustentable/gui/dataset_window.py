@@ -75,19 +75,28 @@ class DatasetWindow(App):
         self.body = Container(layout="stack", direction="horizontal", flex=1, spacing=12)
         self.column_sidebar = ColumnSidebar(parent=self.body, tokens=self.theme.tokens, visible=False)
         self.content = Container(parent=self.body, layout="stack", flex=1, spacing=8)
-
         self.slider_row = Container(parent=self.content, layout="stack", direction="horizontal", spacing=12, height=36, visible=False)
         self.slider_label = Label(parent=self.slider_row, text="Train: 80.0% | Test: 20.0%", width=200)
         self.split_slider = Slider(parent=self.slider_row, minimum=0, maximum=100, value=20.0, flex=1)
         self.split_slider.changed.connect(self.on_slider_changed)
-        self.confirm_split_btn = Button(parent=self.slider_row, text="Confirm", width=100)
+        self.confirm_split_btn = Button(parent=self.slider_row, text="Confirm", width=130)
         self.confirm_split_btn.click.connect(self.on_confirm_split)
-
         self.show_sidebar = SidebarButton(parent=self.content, icon="menu", width=28, height=28, tooltip="Show panel", visible=False)
         self.dataset_grid = PandaGrid(parent=self.content, flex=1, min_height=240)
         self.error_dialog = ErrorDialog(title="Unable to open dataset")
         self.column_sidebar.hide_panel.click.connect(self.hide_column_sidebar)
         self.column_sidebar.confirm.click.connect(self.confirm_selection)
+
+    def _reset_slider_state(self) -> None:
+        """Resets the slider, labels, and confirm button back to their initial default states."""
+        if hasattr(self, "split_slider"):
+            self.split_slider.value = 20.0
+            self.slider_label.text = "Train: 80.0% | Test: 20.0%"
+        if hasattr(self, "confirm_split_btn"):
+            self.confirm_split_btn.text = "Confirm"
+            self.confirm_split_btn.enabled = True
+        if hasattr(self, "split_controller"):
+            self.split_controller.on_slider_move(20.0)
 
     def hide_column_sidebar(self, event: ClickEvent) -> None:
         """Collapse the column panel so the table takes the whole width."""
@@ -108,6 +117,7 @@ class DatasetWindow(App):
         if not inputs or output is None:
             return
         self.selection = (inputs, output)
+        self._reset_slider_state()
         self.slider_row.visible = True
 
     def on_slider_changed(self, event: ChangeEvent[float]) -> None:
@@ -162,9 +172,9 @@ class DatasetWindow(App):
             self.column_sidebar.load_columns(frame.columns)
             self.dataset = frame
             self.selection = None
-
             self.split_controller = TrainTestSliderController(frame=self.dataset, initial_test_pct=self.split_slider.value)
-
+            self._reset_slider_state()
+            self.slider_row.visible = False
             self.path_text.text = absolute_path
             self._set_sidebar_visible(True)
         except (DataImportError, OSError, TypeError, ValueError) as error:
