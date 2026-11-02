@@ -1,4 +1,7 @@
-"""Proof of concept: train, interpret and evaluate a linear regression model with scikit-learn."""
+"""Proof of concept: train, interpret and evaluate simple and multiple linear regression models with scikit-learn.
+
+A simple regression is a multiple regression with a single feature, so both cases share the same functions.
+"""
 
 from pandas import DataFrame, Series
 from sklearn.linear_model import LinearRegression
@@ -8,15 +11,19 @@ from sklearn.model_selection import train_test_split
 from sustentable.core.readers import get_reader
 
 DATA_FILE = "data/housing(1).csv"
-FEATURE_COLUMN = "median_income"
 TARGET_COLUMN = "median_house_value"
-NEW_VALUE = 5.0  # New median_income value to predict
 TEST_RATIO = 0.2
 
+# Each experiment maps its feature columns to the new values to predict.
+EXPERIMENTS = [
+    {"median_income": 5.0},
+    {"median_income": 5.0, "housing_median_age": 30.0, "total_rooms": 2000.0},
+]
 
-def data_preparation(data: DataFrame) -> tuple[DataFrame, DataFrame, Series, Series]:
+
+def data_preparation(data: DataFrame, features: list[str]) -> tuple[DataFrame, DataFrame, Series, Series]:
     """Split the input and output columns into training and test sets."""
-    X = data[[FEATURE_COLUMN]]
+    X = data[features]
     y = data[TARGET_COLUMN]
 
     return _data_split(X, y)
@@ -36,8 +43,10 @@ def train_model(X_train: DataFrame, y_train: Series) -> LinearRegression:
 
 
 def model_formula(model: LinearRegression) -> str:
-    """Return the model formula using the column names, the coefficient and the intercept."""
-    return f"\n{TARGET_COLUMN} = {model.coef_[0]:.4f} * {FEATURE_COLUMN} + {model.intercept_:.4f}"
+    """Return the model formula using the column names, the coefficients and the intercept."""
+    terms = " + ".join(f"{coef:.4f} * {name}" for coef, name in zip(model.coef_, model.feature_names_in_, strict=True))
+
+    return f"\n{TARGET_COLUMN} = {terms} + {model.intercept_:.4f}"
 
 
 def evaluate_model(model: LinearRegression, X: DataFrame, y: Series, label: str) -> None:
@@ -49,20 +58,23 @@ def evaluate_model(model: LinearRegression, X: DataFrame, y: Series, label: str)
 
 
 def main() -> None:
-    """Load the data, train the model, show its formula, evaluate it and make a new prediction."""
+    """Load the data and, for each experiment, train a model, show its formula, evaluate it and make a new prediction."""
     data = get_reader(DATA_FILE).read()
 
-    X_train, X_test, y_train, y_test = data_preparation(data)
+    for new_values in EXPERIMENTS:
+        features = list(new_values)
 
-    model = train_model(X_train, y_train)
+        X_train, X_test, y_train, y_test = data_preparation(data, features)
 
-    print(model_formula(model))
+        model = train_model(X_train, y_train)
 
-    evaluate_model(model, X_train, y_train, "train")
-    evaluate_model(model, X_test, y_test, "test")
+        print(model_formula(model))
 
-    new_input = DataFrame({FEATURE_COLUMN: [NEW_VALUE]})
-    print(f"\nPrediction for {FEATURE_COLUMN} = {NEW_VALUE}: {model.predict(new_input)[0]:.4f}")
+        evaluate_model(model, X_train, y_train, "train")
+        evaluate_model(model, X_test, y_test, "test")
+
+        new_input = DataFrame([new_values])
+        print(f"\nPrediction for {new_values}: {model.predict(new_input)[0]:.4f}")
 
 
 if __name__ == "__main__":
