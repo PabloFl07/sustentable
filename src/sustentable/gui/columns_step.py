@@ -1,18 +1,17 @@
-"""Side panel where the user picks the input (X) and output (Y) columns of a regression."""
+"""Compact input/output selection and formula summary for the columns step."""
 
 from collections import Counter
 from collections.abc import Hashable, Iterable
 from itertools import count
+from typing import ClassVar
 
-from pysual import Button, ChangeEvent, CheckBox, ClickEvent, Container, Label, RadioButton, ScrollArea, Tokens
-
-from sustentable.gui.controls.sidebar_button import SidebarButton
+from pysual import ChangeEvent, CheckBox, Container, Event, Label, RadioButton, ScrollArea, Step, Tokens, UiEvent
 
 
-class ColumnSidebar(ScrollArea):
+class ColumnsStep(Step):
     """List the dataset columns as X check boxes and Y radio buttons, and summarize the chosen columns.
 
-    The owner window wires ``hide_panel`` and ``confirm``; this panel only keeps the selection consistent.
+    The owner window confirms the selection; this step keeps the choices consistent and emits ``edited``.
     A column chosen as Y cannot also be an X. Column labels are kept as they are in the DataFrame,
     so the selection can index the frame directly.
 
@@ -21,36 +20,33 @@ class ColumnSidebar(ScrollArea):
     """
 
     _instances = count()
+    edited: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Create the panel colored with the window theme's ``tokens``; it starts with no columns."""
-        defaults: dict[str, object] = {"layout": "stack", "width": 280, "padding": 8, "spacing": 6, "background": tokens.surface}
-        defaults.update(properties)
-        super().__init__(**defaults)
+        """Keep independently scrolling X, Y and summary columns above the shared table."""
+        super().__init__(title="Columns", direction="horizontal", height=196, padding=8, spacing=16, **properties)
         self._background = tokens.surface
         self._tokens = tokens
         # Each panel gets its own radio group so two panels never share the Y choice.
-        self._output_group_name = f"column-sidebar-output-{next(self._instances)}"
+        self._output_group_name = f"column-step-output-{next(self._instances)}"
         self._columns: list[Hashable] = []
         self._texts: list[str] = []
         self._inputs: list[CheckBox] = []
         self._outputs: list[RadioButton] = []
-        background = self._background
 
-        self.header = Container(parent=self, layout="stack", direction="horizontal", height=28)
-        Label(parent=self.header, text="COLUMNS", font_size=18, flex=1, background=background)
-        self.hide_panel = SidebarButton(parent=self.header, icon="chevron_left", width=28, height=28, tooltip="Hide panel")
-
-        Label(parent=self, text="Input (X)", height=22, font_size=16, background=background)
-        self.input_group = Container(parent=self, layout="stack", spacing=4)
-        Label(parent=self, text="Output (Y)", height=22, font_size=16, background=background)
-        self.output_group = Container(parent=self, layout="stack", spacing=4)
+        inputs = Container(parent=self, layout="stack", spacing=4, flex=1)
+        Label(parent=inputs, text="Inputs (X)", height=24)
+        self.input_group = ScrollArea(parent=inputs, layout="stack", spacing=4, flex=1)
+        outputs = Container(parent=self, layout="stack", spacing=4, flex=1)
+        Label(parent=outputs, text="Output (Y)", height=24)
+        self.output_group = ScrollArea(parent=outputs, layout="stack", spacing=4, flex=1)
+        summary = Container(parent=self, layout="stack", spacing=6, flex=1)
 
         # Mode header (outside the box)
-        self.mode = Label(parent=self, text="", height=24, font_size=16, background=background)
+        self.mode = Label(parent=summary, text="", height=24, font_size=16)
         # Box summarizing the selection: the Y column, the X columns as chips, and the formula
         box = tokens.raised
-        self.formula_box = Container(parent=self, layout="stack", padding=10, spacing=6, background=box)
+        self.formula_box = ScrollArea(parent=summary, layout="stack", padding=10, spacing=6, background=box, flex=1)
         Label(parent=self.formula_box, text="OUTPUT (Y)", height=18, font_size=11, foreground=tokens.muted, background=box)
         self.output_chips = Container(parent=self.formula_box, layout="flow", direction="horizontal", spacing=6)
         self.input_caption = Label(parent=self.formula_box, text="INPUTS (X)", height=18, font_size=13, foreground=tokens.muted, background=box)
@@ -58,14 +54,7 @@ class ColumnSidebar(ScrollArea):
         Container(parent=self.formula_box, height=1, background=tokens.border)
         self.formula = Label(parent=self.formula_box, text="", font_size=13, word_wrap=True, foreground=tokens.muted, background=box)
 
-        self.confirm = Button(parent=self, text="Confirm selection", icon="check", height=30, enabled=False)
-        self.confirm.click.connect(self._on_confirm_click)
         self._refresh_mode()
-
-    def _on_confirm_click(self, event: ClickEvent) -> None:
-        """Provide visual feedback when the selection is confirmed."""
-        self.confirm.text = "Confirmed!"
-        self.confirm.enabled = False
 
     def load_columns(self, columns: Iterable[Hashable]) -> None:
         """Replace the listed columns, clearing the previous selection."""
@@ -77,6 +66,7 @@ class ColumnSidebar(ScrollArea):
         self._outputs = []
 
         for text in self._texts:
+            # These controls are created from dataset columns, without fixed names for convention binding.
             check = CheckBox(parent=self.input_group, text=text, height=24, background=self._background, font_size=14)
             check.changed.connect(self._on_selection)
             self._inputs.append(check)
@@ -106,6 +96,15 @@ class ColumnSidebar(ScrollArea):
         return self.input_columns, self.output_column
 
     @property
+    def problem(self) -> str:
+        """Return a specific live hint for the missing choice."""
+        if self.output_column is None:
+            return "Choose an output column (Y)."
+        if not self.input_columns:
+            return "Choose at least one input column (X), different from the output."
+        return ""
+
+    @property
     def output_chip_texts(self) -> list[str]:
         """Column names currently shown as the output chip."""
         return [chip.children[0].text for chip in self.output_chips.children]
@@ -126,6 +125,7 @@ class ColumnSidebar(ScrollArea):
     def _on_selection(self, event: ChangeEvent[bool]) -> None:
         """Recompute the mode and formula after any check box or radio button changes."""
         self._refresh_mode()
+        self.edited.emit(UiEvent(source=self, origin=event.origin))
 
     def _refresh_mode(self) -> None:
         """Disable the Y column as an input and show the regression mode, formula, and confirm state."""
@@ -142,8 +142,6 @@ class ColumnSidebar(ScrollArea):
             self._show_chips(self.output_chips, [], primary=True)
             self._show_chips(self.input_chips, [], primary=False)
             self.formula_box.visible = False
-            self.confirm.text = "Confirm selection"
-            self.confirm.enabled = False
             return
 
         if len(inputs) == 1:
@@ -156,8 +154,6 @@ class ColumnSidebar(ScrollArea):
         self._show_chips(self.input_chips, input_texts, primary=False)
         self.formula.text = self._texts[output] + " ~ " + " + ".join(input_texts)
         self.formula_box.visible = True
-        self.confirm.text = "Confirm selection"
-        self.confirm.enabled = True
 
     def _show_chips(self, holder: Container, texts: list[str], primary: bool) -> None:
         """Replace the chips in ``holder``: the accent color marks the output, the panel color the inputs."""

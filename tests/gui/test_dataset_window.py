@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from pandas import DataFrame
-from pysual import CapabilityError, ClickEvent, GridColumn, GridRow
+from pysual import CapabilityError, GridColumn, GridRow, UiEvent
 from pysual.errors import LifecycleError
 
 from sustentable.core.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
@@ -105,8 +105,8 @@ def test_show_dataset_displays_the_file(request: pytest.FixtureRequest, tmp_path
     assert isinstance(window.dataset_grid, PandaGrid)
     assert window.dataset is not None
     assert window.dataset.equals(get_reader(path).read())
-    assert window.path_text.text == str(path.resolve())
-    assert "cañón" in window.path_text.text
+    assert window.dataset_step.path_text.text == str(path.resolve())
+    assert "cañón" in window.dataset_step.path_text.text
     show_error_dialog.assert_not_called()
     assert [(column.title, column.kind, column.align) for column in window.dataset_grid.columns] == [
         ("name", "text", "left"),
@@ -115,28 +115,29 @@ def test_show_dataset_displays_the_file(request: pytest.FixtureRequest, tmp_path
     assert [row.cells for row in window.dataset_grid.rows] == [("José", 19), ("Begoña", 21)]
 
 
-def test_column_panel_opens_once_a_dataset_loads(example_csv: Path, show_error_dialog: Mock) -> None:
-    """Before any dataset neither the panel nor its reopen button shows; a load opens the panel with the columns."""
+def test_columns_become_reachable_once_a_dataset_loads(example_csv: Path, show_error_dialog: Mock) -> None:
+    """Loading populates the columns and unlocks their step while retaining the shared preview."""
     window = _window()
-    assert not window.column_sidebar.visible
-    assert not window.show_sidebar.visible
+    assert not window.wizard.can_select(1)
+    assert not window.advance.enabled
 
     asyncio.run(window.show_dataset(example_csv))
 
-    assert window.column_sidebar.visible
-    assert not window.show_sidebar.visible
-    assert [check.text for check in window.column_sidebar._inputs] == ["name", "age"]
+    assert window.wizard.can_select(1)
+    assert window.advance.enabled
+    assert [check.text for check in window.columns_step._inputs] == ["name", "age"]
 
 
-def test_failed_first_load_keeps_the_column_panel_closed(tmp_path: Path, show_error_dialog: Mock) -> None:
-    """A load that fails before any dataset leaves the panel and its reopen button hidden."""
+def test_failed_first_load_keeps_later_steps_locked(tmp_path: Path, show_error_dialog: Mock) -> None:
+    """A failed first load retains the empty dataset step and its live guidance."""
     window = _window()
 
     asyncio.run(window.show_dataset(tmp_path / "missing.csv"))
 
     show_error_dialog.assert_called_once()
-    assert not window.column_sidebar.visible
-    assert not window.show_sidebar.visible
+    assert window.wizard.selected_step is window.dataset_step
+    assert not window.wizard.can_select(1)
+    assert not window.advance.enabled
 
 
 def test_failed_load_keeps_the_previous_dataset(example_csv: Path, tmp_path: Path, show_error_dialog: Mock) -> None:
@@ -144,7 +145,7 @@ def test_failed_load_keeps_the_previous_dataset(example_csv: Path, tmp_path: Pat
     window = _window()
     asyncio.run(window.show_dataset(example_csv))
     previous = window.dataset
-    previous_path = window.path_text.text
+    previous_path = window.dataset_step.path_text.text
     previous_columns, previous_rows = window.dataset_grid.columns, window.dataset_grid.rows
 
     # A different name from example_csv: both fixtures would otherwise share tmp_path / "example.csv".
@@ -155,7 +156,7 @@ def test_failed_load_keeps_the_previous_dataset(example_csv: Path, tmp_path: Pat
     asyncio.run(window.show_dataset(damaged))
 
     show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
-    assert window.path_text.text == previous_path
+    assert window.dataset_step.path_text.text == previous_path
     assert window.dataset is previous
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
@@ -172,8 +173,8 @@ def test_show_dataset_accepts_a_relative_path(
     window = _window()
     asyncio.run(window.show_dataset(path))
 
-    assert window.path_text.text == str(path.resolve())
-    assert Path(window.path_text.text).is_absolute()
+    assert window.dataset_step.path_text.text == str(path.resolve())
+    assert Path(window.dataset_step.path_text.text).is_absolute()
     show_error_dialog.assert_not_called()
 
 
@@ -193,7 +194,7 @@ def test_new_dataset_replaces_the_table_after_an_error(example_csv: Path, tmp_pa
     asyncio.run(window.show_dataset(replacement))
 
     assert window.dataset.equals(get_reader(replacement).read())
-    assert window.path_text.text == str(replacement.resolve())
+    assert window.dataset_step.path_text.text == str(replacement.resolve())
     show_error_dialog.assert_not_called()
     assert [column.title for column in window.dataset_grid.columns] == ["score"]
     assert [row.cells for row in window.dataset_grid.rows] == [(1.5,)]
@@ -204,7 +205,7 @@ def test_grid_validation_error_preserves_the_previous_dataset(example_csv: Path,
     window = _window()
     asyncio.run(window.show_dataset(example_csv))
     previous = window.dataset
-    previous_path = window.path_text.text
+    previous_path = window.dataset_step.path_text.text
     previous_columns, previous_rows = window.dataset_grid.columns, window.dataset_grid.rows
     oversized = tmp_path / "oversized.csv"
     oversized.write_text("text\n" + "x" * 4097 + "\n", encoding="utf-8")
@@ -215,7 +216,7 @@ def test_grid_validation_error_preserves_the_previous_dataset(example_csv: Path,
 
     show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
     assert window.dataset is previous
-    assert window.path_text.text == previous_path
+    assert window.dataset_step.path_text.text == previous_path
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
 
@@ -234,7 +235,7 @@ def test_filesystem_error_is_reported_without_losing_data(example_csv: Path, mon
 
     show_error_dialog.assert_called_once_with(window.error_dialog, "The file became unavailable.")
     assert window.dataset is previous
-    assert window.path_text.text == str(example_csv.resolve())
+    assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
 
@@ -250,12 +251,12 @@ def test_cancelled_dialog_preserves_the_entire_state(example_csv: Path, monkeypa
     monkeypatch.setattr(DatasetWindow, "choose_path", dialog)
     monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", reader)
 
-    asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
+    asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
     dialog.assert_awaited_once_with(title="Open dataset", extensions=DATASET_EXTENSIONS)
     reader.assert_not_called()
     assert window.dataset is previous
-    assert window.path_text.text == str(example_csv.resolve())
+    assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
     show_error_dialog.assert_not_called()
@@ -266,10 +267,10 @@ def test_dialog_selection_loads_the_chosen_file(example_csv: Path, monkeypatch: 
     window = _window()
     monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=example_csv))
 
-    asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
+    asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
     assert window.dataset.equals(get_reader(example_csv).read())
-    assert window.path_text.text == str(example_csv.resolve())
+    assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert [row.cells for row in window.dataset_grid.rows] == [("José", 19), ("Begoña", 21)]
     show_error_dialog.assert_not_called()
 
@@ -297,24 +298,24 @@ def test_dialog_error_preserves_data_and_allows_another_browse(
     monkeypatch.setattr(DatasetWindow, "choose_path", dialog)
     monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", reader)
 
-    asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
+    asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
     dialog.assert_awaited_once_with(title="Open dataset", extensions=DATASET_EXTENSIONS)
     reader.assert_not_called()
     assert window.dataset is previous
-    assert window.path_text.text == str(example_csv.resolve())
+    assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
     show_error_dialog.assert_called_once_with(window.error_dialog, str(error))
     show_error_dialog.reset_mock()
 
-    asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
+    asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
     assert dialog.await_count == 2
     reader.assert_called_once_with(replacement)
     show_error_dialog.assert_not_called()
     assert window.dataset.equals(get_reader(replacement).read())
-    assert window.path_text.text == str(replacement.resolve())
+    assert window.dataset_step.path_text.text == str(replacement.resolve())
     assert [column.title for column in window.dataset_grid.columns] == ["score"]
     assert [row.cells for row in window.dataset_grid.rows] == [(1.5,)]
 
@@ -333,11 +334,11 @@ def test_unsupported_path_returned_by_dialog_is_reported(
         get_reader(unsupported).read()
     monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=unsupported))
 
-    asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
+    asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
     show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
     assert window.dataset is previous
-    assert window.path_text.text == str(example_csv.resolve())
+    assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
 
@@ -354,12 +355,12 @@ def test_closed_window_during_dialog_preserves_data_without_an_error(
     monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(side_effect=LifecycleError("The owner was closed.")))
     monkeypatch.setattr("sustentable.gui.dataset_window.get_reader", reader)
 
-    asyncio.run(window.open_dataset_on_click(ClickEvent(source=window.open_dataset)))
+    asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
     reader.assert_not_called()
     show_error_dialog.assert_not_called()
     assert window.dataset is previous
-    assert window.path_text.text == str(example_csv.resolve())
+    assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
 
@@ -401,20 +402,22 @@ def test_pending_load_keeps_controls_responsive_and_ignores_overlaps(
         try:
             assert await asyncio.to_thread(started.wait, 5), "The dataset reader did not start."
             assert window.loading_row.visible
-            assert not window.open_dataset.enabled
+            assert not window.dataset_step.open_dataset.enabled
+            assert not window.wizard.enabled
+            assert not window.advance.enabled and not window.back.enabled
             assert window.dataset is previous
-            assert window.path_text.text == str(example_csv.resolve())
+            assert window.dataset_step.path_text.text == str(example_csv.resolve())
             assert window.dataset_grid.rows == previous_rows
             # This public mutation must reach Pysual's UI owner while the worker is still blocked.
-            window.path_label.text = "The UI remains responsive"
-            assert window.path_label.text == "The UI remains responsive"
+            window.dataset_step.path_label.text = "The UI remains responsive"
+            assert window.dataset_step.path_label.text == "The UI remains responsive"
             assert not finished.is_set()
             await _wait_for_spinner_advance(window.loading_spinner)
 
             await asyncio.wait_for(window.show_dataset(tmp_path / "ignored.csv"), 5)
             assert requested_paths == [replacement]
             assert window.loading_row.visible
-            assert not window.open_dataset.enabled
+            assert not window.dataset_step.open_dataset.enabled
             release.set()
             await asyncio.wait_for(pending, 5)
         finally:
@@ -428,17 +431,18 @@ def test_pending_load_keeps_controls_responsive_and_ignores_overlaps(
     asyncio.run(exercise())
 
     assert not window.loading_row.visible
-    assert window.open_dataset.enabled
+    assert window.dataset_step.open_dataset.enabled
+    assert window.wizard.enabled
     assert spinner_activity.completed.is_set()
     if read_error is None:
         show_error_dialog.assert_not_called()
         assert window.dataset is frame
-        assert window.path_text.text == str(replacement.resolve())
+        assert window.dataset_step.path_text.text == str(replacement.resolve())
         assert [row.cells for row in window.dataset_grid.rows] == [(1.5,)]
     else:
         show_error_dialog.assert_called_once_with(window.error_dialog, str(read_error))
         assert window.dataset is previous
-        assert window.path_text.text == str(example_csv.resolve())
+        assert window.dataset_step.path_text.text == str(example_csv.resolve())
         assert window.dataset_grid.columns == previous_columns
         assert window.dataset_grid.rows == previous_rows
 
@@ -498,10 +502,10 @@ def test_cancelled_load_restores_controls_and_cannot_commit_late_results(
             # Pysual forwards caller cancellation to its UI loop asynchronously.
             assert await asyncio.to_thread(cancelled_complete.wait, 5), "The cancelled UI load did not finish."
             assert not window.loading_row.visible
-            assert window.open_dataset.enabled
+            assert window.dataset_step.open_dataset.enabled
             assert spinner_activity.completed.is_set()
             assert window.dataset is previous
-            assert window.path_text.text == str(example_csv.resolve())
+            assert window.dataset_step.path_text.text == str(example_csv.resolve())
             assert window.dataset_grid.columns == previous_columns
             assert window.dataset_grid.rows == previous_rows
 
@@ -521,10 +525,10 @@ def test_cancelled_load_restores_controls_and_cannot_commit_late_results(
 
     show_error_dialog.assert_not_called()
     assert window.dataset is replacement_frame
-    assert window.path_text.text == str(replacement_path.resolve())
+    assert window.dataset_step.path_text.text == str(replacement_path.resolve())
     assert [row.cells for row in window.dataset_grid.rows] == [(42,)]
     assert not window.loading_row.visible
-    assert window.open_dataset.enabled
+    assert window.dataset_step.open_dataset.enabled
     assert spinner_activity.completed.is_set()
 
 
@@ -568,7 +572,7 @@ def test_spinner_advances_during_reading_and_conversion_and_restarts_for_next_lo
                 assert await asyncio.to_thread(spinner_activity.started.wait, 5), "The spinner did not start."
                 assert spinner_activity.runs == run
                 assert window.loading_row.visible
-                assert not window.open_dataset.enabled
+                assert not window.dataset_step.open_dataset.enabled
                 assert not spinner_activity.completed.is_set()
                 await _wait_for_spinner_advance(window.loading_spinner)
 
@@ -583,8 +587,8 @@ def test_spinner_advances_during_reading_and_conversion_and_restarts_for_next_lo
 
                 assert spinner_activity.completed.is_set()
                 assert not window.loading_row.visible
-                assert window.open_dataset.enabled
-                assert window.path_text.text == str((tmp_path / f"dataset-{run}.csv").resolve())
+                assert window.dataset_step.open_dataset.enabled
+                assert window.dataset_step.path_text.text == str((tmp_path / f"dataset-{run}.csv").resolve())
                 assert [row.cells for row in window.dataset_grid.rows] == [(1.5,)]
             finally:
                 release_read.set()
