@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 
@@ -24,9 +23,7 @@ def mean(dataframe: pd.DataFrame, column):
 
     numeric_columns = values.index.tolist()
 
-    return dataframe[
-        numeric_columns
-    ].fillna(values)
+    return dataframe[numeric_columns].fillna(values)
 
 
 def delete_strategy(dataframe: pd.DataFrame, column):
@@ -70,9 +67,7 @@ def median(dataframe: pd.DataFrame, column):
 
     numeric_columns = values.index.tolist()
 
-    return dataframe[
-        numeric_columns
-    ].fillna(values)
+    return dataframe[numeric_columns].fillna(values)
 
 
 def constant(dataframe: pd.DataFrame, column, constant_value):
@@ -95,12 +90,12 @@ def constant(dataframe: pd.DataFrame, column, constant_value):
 
 
 def process_nan_values(
-    X_train,
-    y_train=None,
+    X_train: pd.DataFrame,
+    y_train: pd.DataFrame = None,
     input_columns=None,
     output_columns=None,
-    strategy: function = "eliminar",
-    constant_value=None
+    strategy: function = delete_strategy,
+    constant_value=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Handles missing values in the training dataset using
@@ -144,22 +139,13 @@ def process_nan_values(
         ValueError: If a selected column is not available
             in the training dataset.
     """
-    valid_strategies = [
-        mean,
-        median,
-        delete_strategy,
-        constant
-    ]
+    valid_strategies = [mean, median, delete_strategy, constant]
 
     if strategy not in valid_strategies:
-        raise ValueError(
-            f"Invalid strategy. Available options: {valid_strategies}"
-        )
+        raise ValueError(f"Invalid strategy. Available options: {valid_strategies}")
 
     if strategy == constant and constant_value is None:
-        raise ValueError(
-            "A constant value must be provided."
-        )
+        raise ValueError("A constant value must be provided.")
 
     X_train = X_train.copy()
 
@@ -167,22 +153,15 @@ def process_nan_values(
         y_train = y_train.copy()
 
     # Selected columns
-    columns = list(dict.fromkeys(
-        (input_columns or []) +
-        (output_columns or [])
-    ))
+    columns = list(dict.fromkeys((input_columns or []) + (output_columns or [])))
 
     if not columns:
         raise ValueError("At least one column must be selected.")
 
     # Check selected columns
     for column in columns:
-        if column not in X_train.columns and (
-            y_train is None or column not in getattr(y_train, "columns", [])
-        ):
-            raise ValueError(
-                f"Column '{column}' is not available in the training dataset."
-            )
+        if column not in X_train.columns and (y_train is None or column not in getattr(y_train, "columns", [])):
+            raise ValueError(f"Column '{column}' is not available in the training dataset.")
 
     # Combine X and y to process rows together
     if y_train is not None:
@@ -193,16 +172,16 @@ def process_nan_values(
     # Apply the selected strategy
     if strategy is not constant:
         strategy(train, input_columns)
+        strategy(y_train, input_columns)
     else:
         strategy(train, input_columns, constant_value)
+        strategy(y_train, input_columns)
 
     # Separate X and y
     X_train_processed = train[X_train.columns]
 
     if y_train is not None:
-        y_train_processed = train[y_train.name] if isinstance(
-            y_train, pd.Series
-        ) else train[y_train.columns]
+        y_train_processed = train[y_train.name] if isinstance(y_train, pd.Series) else train[y_train.columns]
 
     else:
         y_train_processed = None
@@ -210,12 +189,7 @@ def process_nan_values(
     return (X_train_processed, y_train_processed)
 
 
-def detect_nan_values(
-    X_train,
-    y_train=None,
-    input_columns=None,
-    output_columns=None
-):
+def detect_nan_values(X_train, y_train=None, input_columns=None, output_columns=None):
     """
     Detects and counts missing values in the selected columns
     of the training dataset.
@@ -273,17 +247,17 @@ def detect_nan_values(
     # Check that the selected columns exist
     for column in columns:
         if column not in train.columns:
-            raise ValueError(
-                f"Column '{column}' does not exist in the dataset."
-            )
+            raise ValueError(f"Column '{column}' does not exist in the dataset.")
 
     results = []
 
     for column in columns:
-        results.append({
-            "column": column,
-            "nan_count": int(train[column].isna().sum()),
-        })
+        results.append(
+            {
+                "column": column,
+                "nan_count": int(train[column].isna().sum()),
+            }
+        )
 
     results = pd.DataFrame(results)
 
