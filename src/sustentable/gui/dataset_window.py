@@ -31,6 +31,7 @@ from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_
 from sustentable.gui.dataset_step import DatasetStep
 from sustentable.gui.error_dialog import ErrorDialog
 from sustentable.gui.split_step import SplitStep
+from sustentable.gui.prepoccess_step import DatabaseStep
 
 DATASET_EXTENSIONS: tuple[str, ...] = (
     *CSVFileCheck.extensions,
@@ -62,6 +63,7 @@ class DatasetWindow(App):
         self.dataset_step = DatasetStep(parent=self.wizard)
         self.columns_step = ColumnsStep(parent=self.wizard, tokens=self.theme.tokens)
         self.split_step = SplitStep(parent=self.wizard)
+        self.preproccess_step = DatabaseStep(parent=self.wizard)
         for title in ("Preprocess", "Model", "Predict"):
             Step(parent=self.wizard, title=title, optional=True, height=0, padding=0)
         self.loading_row = Container(parent=self, layout="stack", direction="horizontal", spacing=8, height=24, visible=False)
