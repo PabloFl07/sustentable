@@ -12,9 +12,11 @@ from pandas import DataFrame
 from pysual import ClickEvent
 from pysual.events import Dispatcher
 
+from sustentable.core.data_processing import NanStrategy, detect_nan_values, has_nan_values
 from sustentable.gui import split_step
 from sustentable.gui.dataset_window import DatasetWindow
 from sustentable.gui.error_dialog import ErrorDialog
+from sustentable.gui.preprocess_step import STRATEGY_LABELS
 
 
 class WorkflowWindow(DatasetWindow):
@@ -106,7 +108,8 @@ def test_guidance_confirmation_optional_steps_and_shared_preview(window: Workflo
         assert len(window.train_data) == 8 and len(window.test_data) == 2
         assert sorted([*window.train_data.area, *window.test_data.area]) == list(range(10))
         raw_rows = window.dataset_grid.rows
-        for step in window.wizard.steps[3:]:
+        assert window.preprocess_step.completed and not window.preprocess_step.has_missing_values
+        for step in window.wizard.steps[4:]:
             assert step.optional and not step.children and not step.completed
         await window.request_step(5)
         assert window.wizard.selected_index == 5
@@ -362,5 +365,150 @@ def test_cancelled_split_discards_late_results_and_allows_retry(
             await asyncio.gather(pending, return_exceptions=True)
             assert await asyncio.to_thread(finished.wait, 5)
         assert len(window.train_data) == 6 and len(window.test_data) == 4
+
+    asyncio.run(exercise())
+
+
+@pytest.fixture
+def missing_path(tmp_path: Path) -> Path:
+    """Create a dataset with missing values in the input column and in an unselected column."""
+    path = tmp_path / "missing.csv"
+    area = [None if index in (1, 4, 7) else index for index in range(10)]
+    DataFrame({"area": area, "occupants": [None] * 10, "energy": range(20, 30)}).to_csv(path, index=False)
+    return path
+
+
+async def _apply(window: WorkflowWindow, strategy: NanStrategy, constant: str = "") -> None:
+    window.preprocess_step.strategy.selected_index = list(STRATEGY_LABELS).index(strategy)
+    window.preprocess_step.constant.text = constant
+    await window.settle()
+    window.preprocess_step.apply_button.click.emit(ClickEvent(source=window.preprocess_step.apply_button))
+    await window.settle()
+
+
+def test_missing_values_block_the_model_until_preprocessing_is_applied(window: WorkflowWindow, missing_path: Path) -> None:
+    """Missing values are reported per subset, and each strategy must be applied before continuing."""
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        step = window.preprocess_step
+        report = detect_nan_values(window.train_data, window.test_data, ["area", "energy"])
+        assert step.has_missing_values and report.train.sum() + report.test.sum() == 3
+        assert [row.text for row in step._rows][0] == f"area: training {report.train[0]} · test {report.test[0]}"
+        assert not window.advance.enabled and "Apply preprocessing" in window.feedback.text
+        await window.request_step(4)
+        assert window.wizard.selected_index == 3
+        assert not step.constant.enabled
+
+        await _apply(window, NanStrategy.MEAN)
+        train, test = window.preprocessed_data
+        assert not has_nan_values(train, test, ["area", "energy"])
+        assert test.area.isin([window.train_data.area.mean()]).sum() == report.test[0]
+        assert "values filled" in step.status.text and window.advance.enabled
+        assert window.train_data.area.isna().sum() == report.train[0], "The split itself is not modified."
+
+        await _apply(window, NanStrategy.DELETE)
+        train, test = window.preprocessed_data
+        assert len(train) + len(test) == 7 and "rows removed" in step.status.text
+
+        window.preprocess_step.strategy.selected_index = list(STRATEGY_LABELS).index(NanStrategy.CONSTANT)
+        await window.settle()
+        assert step.constant.enabled and window.preprocessed_data is None and not window.advance.enabled
+        await _apply(window, NanStrategy.CONSTANT, "-1")
+        assert window.preprocessed_data[0].area.min() == -1
+        await window.press_continue()
+        assert window.wizard.selected_index == 4
+
+    asyncio.run(exercise())
+
+
+def test_preprocessing_errors_keep_the_step_retryable(window: WorkflowWindow, missing_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-numeric constant shows an error without applying anything, and the user can retry."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        await _apply(window, NanStrategy.CONSTANT, "abc")
+        errors.assert_called_once()
+        assert "number" in errors.call_args.args[0]
+        assert window.preprocessed_data is None and not window.advance.enabled
+        await _apply(window, NanStrategy.CONSTANT, "0")
+        assert window.preprocessed_data is not None and window.advance.enabled
+
+    asyncio.run(exercise())
+
+
+def test_split_and_column_changes_require_preprocessing_again(window: WorkflowWindow, missing_path: Path) -> None:
+    """Repeating the split or changing the columns discards the applied preprocessing."""
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        await _apply(window, NanStrategy.MEDIAN)
+        assert window.preprocessed_data is not None
+        await window.request_step(2)
+        window.split_step.share.value = 30
+        await window.settle()
+        assert window.preprocessed_data is None and not window.preprocess_step.has_missing_values
+        await window.press_continue()
+        assert window.wizard.selected_index == 3 and window.preprocessed_data is None
+        await _apply(window, NanStrategy.MEDIAN)
+        assert window.preprocessed_data is not None
+        await window.request_step(1)
+        await window.choose_columns((0, 1))
+        assert window.preprocessed_data is None and not window.wizard.can_select(3)
+
+    asyncio.run(exercise())
+
+
+def test_applied_preprocessing_reloads_the_preview_and_the_counters(window: WorkflowWindow, missing_path: Path) -> None:
+    """The table and counters show the processed subsets, and return to the dataset when the result is discarded."""
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        step = window.preprocess_step
+        raw_rows, raw_caption = window.dataset_grid.rows, window.preview_label.text
+        assert step.remaining_missing_values != (0, 0)
+        original = detect_nan_values(window.train_data, window.test_data, ["area", "energy"])
+
+        await _apply(window, NanStrategy.DELETE)
+        train, test = window.preprocessed_data
+        assert len(window.dataset_grid.rows) == len(train) + len(test) == 7
+        assert window.preview_label.text == "missing.csv · preprocessed · training " + f"{len(train)} + test {len(test)} rows"
+        assert step.remaining_missing_values == (0, 0)
+        assert step.summary.text == "Missing values after preprocessing: training 0 · test 0"
+        assert step._rows[0].text.startswith(f"area: training 0 (was {original.train[0]})")
+        assert step._rows[1].text == "energy: training 0 · test 0"
+
+        await _apply(window, NanStrategy.MEAN)
+        assert len(window.dataset_grid.rows) == 10 and step.remaining_missing_values == (0, 0)
+
+        window.preprocess_step.strategy.selected_index = list(STRATEGY_LABELS).index(NanStrategy.MEDIAN)
+        await window.settle()
+        assert window.dataset_grid.rows == raw_rows and window.preview_label.text == raw_caption
+        assert step.remaining_missing_values == (int(original.train.sum()), int(original.test.sum()))
+        assert "(was" not in step._rows[0].text
+
+        await _apply(window, NanStrategy.MEDIAN)
+        await window.request_step(1)
+        await window.choose_columns((0,))
+        await window.choose_columns((0,), output=1)
+        assert window.dataset_grid.rows == raw_rows and window.preview_label.text == raw_caption
+
+    asyncio.run(exercise())
+
+
+def test_failed_preprocessing_restores_the_dataset_preview(window: WorkflowWindow, missing_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An error after a successful apply discards it and shows the loaded dataset again."""
+    monkeypatch.setattr(ErrorDialog, "show_error", Mock())
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        raw_rows = window.dataset_grid.rows
+        await _apply(window, NanStrategy.DELETE)
+        assert len(window.dataset_grid.rows) == 7
+        await _apply(window, NanStrategy.CONSTANT, "abc")
+        assert window.preprocessed_data is None and window.dataset_grid.rows == raw_rows
+        assert "(was" not in window.preprocess_step._rows[0].text
 
     asyncio.run(exercise())

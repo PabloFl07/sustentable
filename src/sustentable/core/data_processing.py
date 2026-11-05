@@ -1,267 +1,157 @@
-import pandas as pd
-import numpy as np
+"""Detect and treat missing values in the selected columns of the train and test subsets.
+
+Every function works on copies: the subsets passed in, and the file on disk, are never changed.
+Fill values for the mean and median strategies come from the training subset only and are reused for the test subset.
+"""
+
+import math
+from collections.abc import Hashable, Iterable
+from dataclasses import dataclass
+from enum import StrEnum
+
+from pandas import DataFrame
+from pandas.api.types import is_numeric_dtype
 
 
-def mean(dataframe: pd.DataFrame, column):
-    """
-    Replaces missing values in the selected numerical columns
-    with their respective mean values.
+class NanStrategy(StrEnum):
+    """Available ways to treat missing values."""
 
-    The mean is calculated using the provided DataFrame.
-
-    Args:
-        dataframe (pd.DataFrame): DataFrame containing the data
-            to be processed.
-        column (list or str): Column or list of columns in which
-            missing values should be replaced.
-
-    Returns:
-        pd.DataFrame: DataFrame containing the selected columns
-            with missing values replaced by their mean.
-    """
-    values = dataframe[column].mean(numeric_only=True)
-
-    numeric_columns = values.index.tolist()
-
-    return dataframe[numeric_columns].fillna(values)
+    DELETE = "delete"
+    MEAN = "mean"
+    MEDIAN = "median"
+    CONSTANT = "constant"
 
 
-def delete_strategy(dataframe: pd.DataFrame, column):
-    """
-    Removes rows containing missing values in the selected columns.
+@dataclass(frozen=True)
+class PreprocessResult:
+    """Processed subsets and how many rows were removed or values were filled in each one."""
 
-    A row is removed if at least one of the specified columns
-    contains a missing value.
-
-    Args:
-        dataframe (pd.DataFrame): DataFrame containing the data
-            to be processed.
-        column (list or str): Column or list of columns used
-            to identify rows with missing values.
-
-    Returns:
-        pd.DataFrame: DataFrame with rows containing missing
-            values in the selected columns removed.
-    """
-    return dataframe.dropna(subset=column)
+    train: DataFrame
+    test: DataFrame
+    strategy: NanStrategy
+    train_changes: int
+    test_changes: int
 
 
-def median(dataframe: pd.DataFrame, column):
-    """
-    Replaces missing values in the selected numerical columns
-    with their respective median values.
-
-    The median is calculated using the provided DataFrame.
+def detect_nan_values(train: DataFrame, test: DataFrame, columns: Iterable[Hashable]) -> DataFrame:
+    """Count the missing values of each selected column, separately for the train and test subsets.
 
     Args:
-        dataframe (pd.DataFrame): DataFrame containing the data
-            to be processed.
-        column (list or str): Column or list of columns in which
-            missing values should be replaced.
+        train: Training subset.
+        test: Test subset.
+        columns: Selected input and output columns. Repeated labels are counted once.
 
     Returns:
-        pd.DataFrame: DataFrame containing the selected columns
-            with missing values replaced by their median.
+        A frame with one row per column and the ``column``, ``train`` and ``test`` columns.
+
+    Raises:
+        ValueError: If no column is selected or a column is missing from either subset.
     """
-    values = dataframe[column].median(numeric_only=True)
+    selected = _selected_columns(train, test, columns)
+    return DataFrame(
+        {
+            "column": selected,
+            "train": [int(train[column].isna().sum()) for column in selected],
+            "test": [int(test[column].isna().sum()) for column in selected],
+        }
+    )
 
-    numeric_columns = values.index.tolist()
 
-    return dataframe[numeric_columns].fillna(values)
+def has_nan_values(train: DataFrame, test: DataFrame, columns: Iterable[Hashable]) -> bool:
+    """Return whether any selected column has a missing value in either subset."""
+    selected = _selected_columns(train, test, columns)
+    return bool(train[selected].isna().to_numpy().any() or test[selected].isna().to_numpy().any())
 
 
-def constant(dataframe: pd.DataFrame, column, constant_value):
+def parse_constant(text: str) -> float:
+    """Convert the user's constant to a finite number.
+
+    Both ``.`` and ``,`` are accepted as the decimal separator.
+
+    Raises:
+        ValueError: If the text is empty, not numeric, or not finite.
     """
-    Replaces missing values in the selected columns with
-    a user-defined constant value.
-
-    Args:
-        dataframe (pd.DataFrame): DataFrame containing the data
-            to be processed.
-        column (list or str): Column or list of columns in which
-            missing values should be replaced.
-        constant_value (Any): Value used to replace missing values.
-
-    Returns:
-        pd.DataFrame: DataFrame containing the selected columns
-            with missing values replaced by the specified constant.
-    """
-    return dataframe[column].fillna(constant_value)
+    cleaned = text.strip().replace(",", ".")
+    try:
+        value = float(cleaned)
+    except ValueError:
+        raise ValueError(f"The constant value must be a number, got {text.strip()!r}.") from None
+    if not math.isfinite(value):
+        raise ValueError("The constant value must be a finite number.")
+    return value
 
 
 def process_nan_values(
-    X_train: pd.DataFrame,
-    y_train: pd.DataFrame = None,
-    input_columns=None,
-    output_columns=None,
-    strategy: function = delete_strategy,
-    constant_value=None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Handles missing values in the training dataset using
-    the selected imputation or removal strategy.
-
-    The function allows processing both input features (X_train)
-    and target variables (y_train). The selected columns are
-    combined temporarily to apply the chosen strategy.
-
-    Available strategies:
-        - mean: Replaces missing numerical values with the mean.
-        - median: Replaces missing numerical values with the median.
-        - delete_strategy: Removes rows containing missing values.
-        - constant: Replaces missing values with a specified constant.
+    train: DataFrame,
+    test: DataFrame,
+    columns: Iterable[Hashable],
+    strategy: NanStrategy | str,
+    constant_value: float | None = None,
+) -> PreprocessResult:
+    """Apply one strategy to the missing values of the selected columns in both subsets.
 
     Args:
-        X_train (pd.DataFrame): Training dataset containing
-            the input features.
-        y_train (pd.Series or pd.DataFrame, optional): Training
-            target variable(s). Defaults to None.
-        input_columns (list, optional): Names of the input columns
-            to be processed. Defaults to None.
-        output_columns (list, optional): Names of the target columns
-            to be processed. Defaults to None.
-        strategy (function): Function defining the strategy used
-            to handle missing values.
-        constant_value (Any, optional): Constant value used when
-            the constant strategy is selected. Defaults to None.
+        train: Training subset.
+        test: Test subset.
+        columns: Selected input and output columns.
+        strategy: How to treat missing values.
+        constant_value: Number used by the constant strategy.
 
     Returns:
-        tuple[pd.DataFrame, pd.DataFrame]:
-            - X_train_processed: Processed training input features.
-            - y_train_processed: Processed training target variable(s),
-              or None if y_train was not provided.
+        The processed copies and, per subset, the rows removed (delete) or values filled (other strategies).
 
     Raises:
-        ValueError: If the selected strategy is not valid.
-        ValueError: If the constant strategy is selected without
-            providing a constant value.
-        ValueError: If no columns are selected.
-        ValueError: If a selected column is not available
-            in the training dataset.
+        ValueError: If the strategy is unknown, the constant is missing or not finite, a column cannot be
+            averaged, the training subset has no values to compute a fill value, or deleting rows would
+            leave a subset empty.
     """
-    valid_strategies = [mean, median, delete_strategy, constant]
+    try:
+        strategy = NanStrategy(strategy)
+    except ValueError:
+        raise ValueError(f"Unknown strategy {strategy!r}. Choose one of: {', '.join(NanStrategy)}.") from None
+    selected = _selected_columns(train, test, columns)
 
-    if strategy not in valid_strategies:
-        raise ValueError(f"Invalid strategy. Available options: {valid_strategies}")
+    if strategy is NanStrategy.DELETE:
+        processed_train = train.dropna(subset=selected).reset_index(drop=True)
+        processed_test = test.dropna(subset=selected).reset_index(drop=True)
+        if processed_train.empty or processed_test.empty:
+            emptied = "training" if processed_train.empty else "test"
+            raise ValueError(f"Deleting the rows with missing values would leave the {emptied} subset empty.")
+        return PreprocessResult(processed_train, processed_test, strategy, len(train) - len(processed_train), len(test) - len(processed_test))
 
-    if strategy == constant and constant_value is None:
-        raise ValueError("A constant value must be provided.")
+    fill_values = _fill_values(train, selected, strategy, constant_value)
+    train_changes = int(train[selected].isna().to_numpy().sum())
+    test_changes = int(test[selected].isna().to_numpy().sum())
+    return PreprocessResult(train.fillna(fill_values), test.fillna(fill_values), strategy, train_changes, test_changes)
 
-    X_train = X_train.copy()
 
-    if y_train is not None:
-        y_train = y_train.copy()
+def _fill_values(train: DataFrame, columns: list[Hashable], strategy: NanStrategy, constant_value: float | None) -> dict[Hashable, float]:
+    """Compute one fill value per column; mean and median use the training subset only."""
+    if strategy is NanStrategy.CONSTANT:
+        if constant_value is None:
+            raise ValueError("A constant value must be provided.")
+        if isinstance(constant_value, bool) or not isinstance(constant_value, int | float) or not math.isfinite(constant_value):
+            raise ValueError("The constant value must be a finite number.")
+        return dict.fromkeys(columns, float(constant_value))
 
-    # Selected columns
-    columns = list(dict.fromkeys((input_columns or []) + (output_columns or [])))
+    values = {}
+    for column in columns:
+        series = train[column]
+        if not is_numeric_dtype(series):
+            raise ValueError(f"Column '{column}' is not numeric, so its {strategy} cannot be computed.")
+        value = series.mean() if strategy is NanStrategy.MEAN else series.median()
+        if math.isnan(value):
+            raise ValueError(f"Column '{column}' has no values in the training subset to compute its {strategy}.")
+        values[column] = float(value)
+    return values
 
-    if not columns:
+
+def _selected_columns(train: DataFrame, test: DataFrame, columns: Iterable[Hashable]) -> list[Hashable]:
+    """Remove repeated labels and check that every column exists in both subsets."""
+    selected = list(dict.fromkeys(columns))
+    if not selected:
         raise ValueError("At least one column must be selected.")
-
-    # Check selected columns
-    for column in columns:
-        if column not in X_train.columns and (y_train is None or column not in getattr(y_train, "columns", [])):
-            raise ValueError(f"Column '{column}' is not available in the training dataset.")
-
-    # Combine X and y to process rows together
-    if y_train is not None:
-        train = pd.concat([X_train, y_train], axis=1)
-    else:
-        train = X_train.copy()
-
-    # Apply the selected strategy
-    if strategy is not constant:
-        strategy(train, input_columns)
-        strategy(y_train, input_columns)
-    else:
-        strategy(train, input_columns, constant_value)
-        strategy(y_train, input_columns)
-
-    # Separate X and y
-    X_train_processed = train[X_train.columns]
-
-    if y_train is not None:
-        y_train_processed = train[y_train.name] if isinstance(y_train, pd.Series) else train[y_train.columns]
-
-    else:
-        y_train_processed = None
-
-    return (X_train_processed, y_train_processed)
-
-
-def detect_nan_values(X_train, y_train=None, input_columns=None, output_columns=None):
-    """
-    Detects and counts missing values in the selected columns
-    of the training dataset.
-
-    The function can inspect both input features (X_train)
-    and target variables (y_train).
-
-    It returns a summary indicating the number of missing values
-    found in each selected column, as well as a boolean indicating
-    whether any missing values exist.
-
-    Args:
-        X_train (pd.DataFrame): Training dataset containing
-            the input features.
-        y_train (pd.Series or pd.DataFrame, optional): Training
-            target variable(s). Defaults to None.
-        input_columns (list, optional): Names of the input columns
-            to inspect. Defaults to None.
-        output_columns (list, optional): Names of the target columns
-            to inspect. Defaults to None.
-
-    Returns:
-        tuple[pd.DataFrame, bool]:
-            - results: DataFrame containing the selected column names
-              and their respective missing value counts.
-            - has_missing_values: True if at least one missing value
-              is found, False otherwise.
-
-    Raises:
-        ValueError: If no columns are selected.
-        ValueError: If a selected column does not exist
-            in the combined training dataset.
-    """
-    columns = []
-
-    if input_columns:
-        columns.extend(input_columns)
-
-    if output_columns:
-        columns.extend(output_columns)
-
-    columns = list(dict.fromkeys(columns))
-
-    if not columns:
-        raise ValueError("At least one column must be selected.")
-
-    train = X_train.copy()
-
-    if y_train is not None:
-        if isinstance(y_train, pd.DataFrame):
-            train = pd.concat([train, y_train], axis=1)
-        else:
-            train[y_train.name or "target"] = y_train
-
-    # Check that the selected columns exist
-    for column in columns:
-        if column not in train.columns:
-            raise ValueError(f"Column '{column}' does not exist in the dataset.")
-
-    results = []
-
-    for column in columns:
-        results.append(
-            {
-                "column": column,
-                "nan_count": int(train[column].isna().sum()),
-            }
-        )
-
-    results = pd.DataFrame(results)
-
-    # Check whether missing values exist
-    has_missing_values = results["nan_count"].sum() > 0
-
-    return results, has_missing_values
+    for column in selected:
+        if column not in train.columns or column not in test.columns:
+            raise ValueError(f"Column '{column}' is not available in the dataset.")
+    return selected
