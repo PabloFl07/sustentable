@@ -143,7 +143,7 @@ def test_back_preserves_results_and_column_edits_invalidate_dependents(window: W
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("invalid_percentage", [0, 1, 100])
+@pytest.mark.parametrize("invalid_percentage", [0, 99, 100])
 def test_split_edits_clear_results_and_empty_subsets_block_confirmation(
     window: WorkflowWindow, dataset_path: Path, invalid_percentage: int
 ) -> None:
@@ -212,15 +212,15 @@ def test_output_exclusion_and_duplicate_labels_remain_supported(window: Workflow
 def test_slider_preview_does_not_shuffle_and_confirmation_runs_in_worker(
     window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Dragging only previews counts; confirmation shuffles once outside the UI thread."""
-    sample = DataFrame.sample
+    """Dragging only previews counts; confirmation splits once outside the UI thread."""
+    split = split_step.split_dataset
     sampling_threads = []
 
-    def observe_sample(frame: DataFrame, *args: object, **kwargs: object) -> DataFrame:
+    def observe_split(*args: object, **kwargs: object) -> tuple[DataFrame, DataFrame]:
         sampling_threads.append(get_ident())
-        return sample(frame, *args, **kwargs)
+        return split(*args, **kwargs)
 
-    monkeypatch.setattr(DataFrame, "sample", observe_sample)
+    monkeypatch.setattr(split_step, "split_dataset", observe_split)
 
     async def exercise() -> None:
         await window.show_dataset(dataset_path)
@@ -266,7 +266,7 @@ def test_pending_split_stays_responsive_ignores_duplicate_clicks_and_recovers(
 ) -> None:
     """A slow or failed split never blocks UI updates or accepts a second confirmation."""
     started, release, finished = ThreadEvent(), ThreadEvent(), ThreadEvent()
-    split = split_step.data_shuffler
+    split = split_step.split_dataset
     calls = []
     errors = Mock()
     monkeypatch.setattr(ErrorDialog, "show_error", errors)
@@ -282,7 +282,7 @@ def test_pending_split_stays_responsive_ignores_duplicate_clicks_and_recovers(
         finally:
             finished.set()
 
-    monkeypatch.setattr(split_step, "data_shuffler", blocked_split)
+    monkeypatch.setattr(split_step, "split_dataset", blocked_split)
 
     async def exercise() -> None:
         await window.show_dataset(dataset_path)
@@ -312,7 +312,7 @@ def test_pending_split_stays_responsive_ignores_duplicate_clicks_and_recovers(
             errors.assert_called_once_with("Cannot split these rows.", title="Unable to split dataset")
             assert window.wizard.selected_index == 2 and window.advance.enabled
             assert window.train_data is None and window.test_data is None
-            monkeypatch.setattr(split_step, "data_shuffler", split)
+            monkeypatch.setattr(split_step, "split_dataset", split)
             await window.press_continue()
         else:
             errors.assert_not_called()
@@ -327,7 +327,7 @@ def test_cancelled_split_discards_late_results_and_allows_retry(
 ) -> None:
     """Cancelling restores navigation, and an abandoned worker cannot overwrite the next confirmed split."""
     started, release, finished = ThreadEvent(), ThreadEvent(), ThreadEvent()
-    split = split_step.data_shuffler
+    split = split_step.split_dataset
 
     def blocked_split(*args: object, **kwargs: object) -> tuple[DataFrame, DataFrame]:
         started.set()
@@ -337,7 +337,7 @@ def test_cancelled_split_discards_late_results_and_allows_retry(
         finally:
             finished.set()
 
-    monkeypatch.setattr(split_step, "data_shuffler", blocked_split)
+    monkeypatch.setattr(split_step, "split_dataset", blocked_split)
 
     async def exercise() -> None:
         await window.show_dataset(dataset_path)
@@ -355,7 +355,7 @@ def test_cancelled_split_discards_late_results_and_allows_retry(
                     await asyncio.sleep(0.01)
             assert window.train_data is None and window.test_data is None
             assert window.wizard.enabled and window.advance.enabled
-            monkeypatch.setattr(split_step, "data_shuffler", split)
+            monkeypatch.setattr(split_step, "split_dataset", split)
             window.split_step.share.value = 40
             await window.settle()
             await window.press_continue()
