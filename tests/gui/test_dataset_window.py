@@ -15,13 +15,13 @@ from pandas import DataFrame
 from pysual import CapabilityError, GridColumn, GridRow, UiEvent
 from pysual.errors import LifecycleError
 
-from sustentable.core.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
-from sustentable.core.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.core.io.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
+from sustentable.core.io.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
 from sustentable.gui.controls import panda_grid
+from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.dataset_window import DATASET_EXTENSIONS, DatasetWindow
-from sustentable.gui.error_dialog import ErrorDialog
 
 
 @dataclass

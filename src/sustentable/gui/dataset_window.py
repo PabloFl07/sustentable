@@ -22,17 +22,17 @@ from pysual import (
 )
 from pysual.errors import LifecycleError
 
-from sustentable.core.data_processing import process_nan_values
-from sustentable.core.exceptions import DataImportError
-from sustentable.core.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
-from sustentable.gui.columns_step import ColumnsStep
+from sustentable.core.io.exceptions import DataImportError
+from sustentable.core.io.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.core.processing.data_processing import process_nan_values
+from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
-from sustentable.gui.dataset_step import DatasetStep
-from sustentable.gui.error_dialog import ErrorDialog
-from sustentable.gui.preprocess_step import PreprocessStep
-from sustentable.gui.split_step import SplitStep
+from sustentable.gui.steps.columns_step import ColumnsStep
+from sustentable.gui.steps.dataset_step import DatasetStep
+from sustentable.gui.steps.preprocess_step import PreprocessStep
+from sustentable.gui.steps.split_step import SplitStep
 
 DATASET_EXTENSIONS: tuple[str, ...] = (
     *CSVFileCheck.extensions,

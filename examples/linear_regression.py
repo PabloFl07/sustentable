@@ -8,7 +8,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
-from sustentable.core.readers import get_reader
+from sustentable.core.io.readers import get_reader
 
 DATA_FILE = "data/housing(1).csv"
 TARGET_COLUMN = "median_house_value"

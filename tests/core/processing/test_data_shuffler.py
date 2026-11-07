@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from sustentable.core.data_shufler import data_shuffler
+from sustentable.core.processing.data_shufler import data_shuffler
 
 # --------------------------------------------------
 # FIXTURE: DataFrame de prueba

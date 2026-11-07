@@ -12,11 +12,11 @@ from pandas import DataFrame
 from pysual import ClickEvent
 from pysual.events import Dispatcher
 
-from sustentable.core.data_processing import NanStrategy, detect_nan_values, has_nan_values
-from sustentable.gui import split_step
+from sustentable.core.processing.data_processing import NanStrategy, detect_nan_values, has_nan_values
+from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.dataset_window import DatasetWindow
-from sustentable.gui.error_dialog import ErrorDialog
-from sustentable.gui.preprocess_step import STRATEGY_LABELS
+from sustentable.gui.steps import split_step
+from sustentable.gui.steps.preprocess_step import STRATEGY_LABELS
 
 
 class WorkflowWindow(DatasetWindow):
