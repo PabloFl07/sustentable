@@ -1,4 +1,4 @@
-"""Compact input/output selection and formula summary for the columns step."""
+"""Compact input/output selection and selection summary for the columns step."""
 
 from collections import Counter
 from collections.abc import Hashable, Iterable
@@ -6,6 +6,12 @@ from itertools import count
 from typing import ClassVar
 
 from pysual import ChangeEvent, CheckBox, Container, Event, Label, RadioButton, ScrollArea, Step, Tokens, UiEvent
+
+# Taller than the other steps so long column lists show more rows without scrolling.
+STEP_HEIGHT = 270
+HEADER_HEIGHT = 20
+ROW_HEIGHT = 22
+ROW_SPACING = 2
 
 
 class ColumnsStep(Step):
@@ -24,7 +30,7 @@ class ColumnsStep(Step):
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
         """Keep independently scrolling X, Y and summary columns above the shared table."""
-        super().__init__(title="Columns", direction="horizontal", height=196, padding=8, spacing=16, **properties)
+        super().__init__(title="Columns", direction="horizontal", height=STEP_HEIGHT, padding=8, spacing=16, **properties)
         self._background = tokens.surface
         self._tokens = tokens
         # Each panel gets its own radio group so two panels never share the Y choice.
@@ -34,25 +40,23 @@ class ColumnsStep(Step):
         self._inputs: list[CheckBox] = []
         self._outputs: list[RadioButton] = []
 
-        inputs = Container(parent=self, layout="stack", spacing=4, flex=1)
-        Label(parent=inputs, text="Inputs (X)", height=24)
-        self.input_group = ScrollArea(parent=inputs, layout="stack", spacing=4, flex=1)
-        outputs = Container(parent=self, layout="stack", spacing=4, flex=1)
-        Label(parent=outputs, text="Output (Y)", height=24)
-        self.output_group = ScrollArea(parent=outputs, layout="stack", spacing=4, flex=1)
-        summary = Container(parent=self, layout="stack", spacing=6, flex=1)
+        inputs = Container(parent=self, layout="stack", spacing=2, flex=1)
+        Label(parent=inputs, text="Inputs (X)", height=HEADER_HEIGHT)
+        self.input_group = ScrollArea(parent=inputs, layout="stack", spacing=ROW_SPACING, flex=1)
+        outputs = Container(parent=self, layout="stack", spacing=2, flex=1)
+        Label(parent=outputs, text="Output (Y)", height=HEADER_HEIGHT)
+        self.output_group = ScrollArea(parent=outputs, layout="stack", spacing=ROW_SPACING, flex=1)
+        summary = Container(parent=self, layout="stack", spacing=4, flex=1)
 
         # Mode header (outside the box)
-        self.mode = Label(parent=summary, text="", height=24, font_size=16)
-        # Box summarizing the selection: the Y column, the X columns as chips, and the formula
+        self.mode = Label(parent=summary, text="", height=HEADER_HEIGHT, font_size=16)
+        # Box summarizing the selection: the Y column and the X columns as chips
         box = tokens.raised
-        self.formula_box = ScrollArea(parent=summary, layout="stack", padding=10, spacing=6, background=box, flex=1)
-        Label(parent=self.formula_box, text="OUTPUT (Y)", height=18, font_size=11, foreground=tokens.muted, background=box)
-        self.output_chips = Container(parent=self.formula_box, layout="flow", direction="horizontal", spacing=6)
-        self.input_caption = Label(parent=self.formula_box, text="INPUTS (X)", height=18, font_size=13, foreground=tokens.muted, background=box)
-        self.input_chips = Container(parent=self.formula_box, layout="flow", direction="horizontal", spacing=6)
-        Container(parent=self.formula_box, height=1, background=tokens.border)
-        self.formula = Label(parent=self.formula_box, text="", font_size=13, word_wrap=True, foreground=tokens.muted, background=box)
+        self.summary_box = ScrollArea(parent=summary, layout="stack", padding=10, spacing=6, background=box, flex=1)
+        Label(parent=self.summary_box, text="OUTPUT (Y)", height=20, font_size=13, foreground=tokens.muted, background=box)
+        self.output_chips = Container(parent=self.summary_box, layout="flow", direction="horizontal", spacing=6)
+        self.input_caption = Label(parent=self.summary_box, text="INPUTS (X)", height=20, font_size=13, foreground=tokens.muted, background=box)
+        self.input_chips = Container(parent=self.summary_box, layout="flow", direction="horizontal", spacing=6)
 
         self._refresh_mode()
 
@@ -67,12 +71,12 @@ class ColumnsStep(Step):
 
         for text in self._texts:
             # These controls are created from dataset columns, without fixed names for convention binding.
-            check = CheckBox(parent=self.input_group, text=text, height=24, background=self._background, font_size=14)
+            check = CheckBox(parent=self.input_group, text=text, height=ROW_HEIGHT, background=self._background, font_size=14)
             check.changed.connect(self._on_selection)
             self._inputs.append(check)
 
             radio = RadioButton(
-                parent=self.output_group, text=text, group=self._output_group_name, height=24, background=self._background, font_size=14
+                parent=self.output_group, text=text, group=self._output_group_name, height=ROW_HEIGHT, background=self._background, font_size=14
             )
             radio.changed.connect(self._on_selection)
             self._outputs.append(radio)
@@ -123,12 +127,12 @@ class ColumnsStep(Step):
         return next((position for position, radio in enumerate(self._outputs) if radio.checked), None)
 
     def _on_selection(self, event: ChangeEvent[bool]) -> None:
-        """Recompute the mode and formula after any check box or radio button changes."""
+        """Recompute the mode and summary after any check box or radio button changes."""
         self._refresh_mode()
         self.edited.emit(UiEvent(source=self, origin=event.origin))
 
     def _refresh_mode(self) -> None:
-        """Disable the Y column as an input and show the regression mode, chips, and formula."""
+        """Disable the Y column as an input and show the regression mode and the chosen columns as chips."""
         output = self._output_position()
         for position, check in enumerate(self._inputs):
             check.enabled = position != output
@@ -138,10 +142,9 @@ class ColumnsStep(Step):
         inputs = self._input_positions()
         if not inputs or output is None:
             self.mode.text = "Choose at least one X and one Y"
-            self.formula.text = ""
             self._show_chips(self.output_chips, [], primary=True)
             self._show_chips(self.input_chips, [], primary=False)
-            self.formula_box.visible = False
+            self.summary_box.visible = False
             return
 
         self.mode.text = "Simple regression" if len(inputs) == 1 else "Multiple regression"
@@ -149,8 +152,7 @@ class ColumnsStep(Step):
         self._show_chips(self.output_chips, [self._texts[output]], primary=True)
         self.input_caption.text = "INPUTS (X) · " + str(len(inputs))
         self._show_chips(self.input_chips, input_texts, primary=False)
-        self.formula.text = self._texts[output] + " ~ " + " + ".join(input_texts)
-        self.formula_box.visible = True
+        self.summary_box.visible = True
 
     def _show_chips(self, holder: Container, texts: list[str], primary: bool) -> None:
         """Replace the chips in ``holder``: the accent color marks the output, the panel color the inputs."""
@@ -163,8 +165,8 @@ class ColumnsStep(Step):
             fill = self._tokens.surface
             text_color = self._tokens.foreground
         for text in texts:
-            chip = Container(parent=holder, layout="stack", padding=4, background=fill)
-            Label(parent=chip, text=text, font_size=13, foreground=text_color, background=fill)
+            chip = Container(parent=holder, layout="stack", padding=5, background=fill)
+            Label(parent=chip, text=text, font_size=15, foreground=text_color, background=fill)
 
 
 def _distinct_texts(columns: list[Hashable]) -> list[str]:
