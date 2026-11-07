@@ -16,12 +16,12 @@ from pysual import CapabilityError, GridColumn, GridRow, UiEvent
 from pysual.errors import LifecycleError
 
 from sustentable.core.io.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
-from sustentable.core.io.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.core.io.readers import SUPPORTED_EXTENSIONS, CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
 from sustentable.gui.controls import panda_grid
 from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
-from sustentable.gui.dataset_window import DATASET_EXTENSIONS, DatasetWindow
+from sustentable.gui.dataset_window import OPEN_ERROR_TITLE, DatasetWindow
 
 
 @dataclass
@@ -79,13 +79,13 @@ def show_error_dialog() -> Iterator[Mock]:
 
 def test_dialog_extensions_follow_the_import_module() -> None:
     """The file dialog offers every extension the reader accepts, including those required by US-14."""
-    assert DATASET_EXTENSIONS == (
+    assert SUPPORTED_EXTENSIONS == (
         *CSVFileCheck.extensions,
         *ExcelFileCheck.extensions,
         *SQLiteFileCheck.extensions,
     )
     for extension in (".csv", ".xlsx", ".xls", ".sqlite", ".db"):
-        assert extension in DATASET_EXTENSIONS
+        assert extension in SUPPORTED_EXTENSIONS
 
 
 @pytest.mark.parametrize("fixture_name", ["example_csv", "example_xlsx", "example_sqlite"])
@@ -155,7 +155,7 @@ def test_failed_load_keeps_the_previous_dataset(example_csv: Path, tmp_path: Pat
         get_reader(damaged).read()
     asyncio.run(window.show_dataset(damaged))
 
-    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
+    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value), title=OPEN_ERROR_TITLE)
     assert window.dataset_step.path_text.text == previous_path
     assert window.dataset is previous
     assert window.dataset_grid.columns == previous_columns
@@ -186,7 +186,7 @@ def test_new_dataset_replaces_the_table_after_an_error(example_csv: Path, tmp_pa
     with pytest.raises(MissingFileError) as caught:
         get_reader(missing).read()
     asyncio.run(window.show_dataset(missing))
-    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
+    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value), title=OPEN_ERROR_TITLE)
     show_error_dialog.reset_mock()
     replacement = tmp_path / "replacement.csv"
     replacement.write_text("score\n1.5\n", encoding="utf-8")
@@ -214,7 +214,7 @@ def test_grid_validation_error_preserves_the_previous_dataset(example_csv: Path,
 
     asyncio.run(window.show_dataset(oversized))
 
-    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
+    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value), title=OPEN_ERROR_TITLE)
     assert window.dataset is previous
     assert window.dataset_step.path_text.text == previous_path
     assert window.dataset_grid.columns == previous_columns
@@ -233,7 +233,7 @@ def test_filesystem_error_is_reported_without_losing_data(example_csv: Path, mon
 
     asyncio.run(window.show_dataset(example_csv))
 
-    show_error_dialog.assert_called_once_with(window.error_dialog, "The file became unavailable.")
+    show_error_dialog.assert_called_once_with(window.error_dialog, "The file became unavailable.", title=OPEN_ERROR_TITLE)
     assert window.dataset is previous
     assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
@@ -253,7 +253,7 @@ def test_cancelled_dialog_preserves_the_entire_state(example_csv: Path, monkeypa
 
     asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
-    dialog.assert_awaited_once_with(title="Open dataset", extensions=DATASET_EXTENSIONS)
+    dialog.assert_awaited_once_with(title="Open dataset", extensions=SUPPORTED_EXTENSIONS)
     reader.assert_not_called()
     assert window.dataset is previous
     assert window.dataset_step.path_text.text == str(example_csv.resolve())
@@ -280,7 +280,7 @@ def test_dialog_selection_loads_the_chosen_file(example_csv: Path, monkeypatch: 
     [
         CapabilityError("File dialog unavailable."),
         OSError("The file chooser could not access the selected folder."),
-        ValueError("Choose a file ending in " + ", ".join(DATASET_EXTENSIONS)),
+        ValueError("Choose a file ending in " + ", ".join(SUPPORTED_EXTENSIONS)),
     ],
 )
 def test_dialog_error_preserves_data_and_allows_another_browse(
@@ -300,13 +300,13 @@ def test_dialog_error_preserves_data_and_allows_another_browse(
 
     asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
-    dialog.assert_awaited_once_with(title="Open dataset", extensions=DATASET_EXTENSIONS)
+    dialog.assert_awaited_once_with(title="Open dataset", extensions=SUPPORTED_EXTENSIONS)
     reader.assert_not_called()
     assert window.dataset is previous
     assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
     assert window.dataset_grid.rows == previous_rows
-    show_error_dialog.assert_called_once_with(window.error_dialog, str(error))
+    show_error_dialog.assert_called_once_with(window.error_dialog, str(error), title=OPEN_ERROR_TITLE)
     show_error_dialog.reset_mock()
 
     asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
@@ -336,7 +336,7 @@ def test_unsupported_path_returned_by_dialog_is_reported(
 
     asyncio.run(window.dataset_step_on_browse(UiEvent(source=window.dataset_step)))
 
-    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value))
+    show_error_dialog.assert_called_once_with(window.error_dialog, str(caught.value), title=OPEN_ERROR_TITLE)
     assert window.dataset is previous
     assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert window.dataset_grid.columns == previous_columns
@@ -440,7 +440,7 @@ def test_pending_load_keeps_controls_responsive_and_ignores_overlaps(
         assert window.dataset_step.path_text.text == str(replacement.resolve())
         assert [row.cells for row in window.dataset_grid.rows] == [(1.5,)]
     else:
-        show_error_dialog.assert_called_once_with(window.error_dialog, str(read_error))
+        show_error_dialog.assert_called_once_with(window.error_dialog, str(read_error), title=OPEN_ERROR_TITLE)
         assert window.dataset is previous
         assert window.dataset_step.path_text.text == str(example_csv.resolve())
         assert window.dataset_grid.columns == previous_columns

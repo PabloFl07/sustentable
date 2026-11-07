@@ -43,7 +43,6 @@ class FileCheck:
     extensions: tuple[str, ...] = ()
 
     def __init__(self, file_path: Path) -> None:
-        # The constructor should receive a Path from `Reader` class constructor
         self.file_path = file_path
 
     def exists(self) -> None:
@@ -150,9 +149,8 @@ class Reader(ABC):
     @property
     def file_path(self) -> Path:
         """Path of the file to check, always stored as a ``Path``."""
-        return Path(self._file_path)
+        return self._file_path
 
-    # We should change the value instead of creating a new instance.
     @file_path.setter
     def file_path(self, value: str | Path) -> None:
         if not isinstance(value, (str, Path)):
@@ -206,22 +204,22 @@ class SQLiteReader(Reader):
 
     def _parse(self) -> DataFrame:
         # One connection for the whole read, so the database cannot change between the checks and the read.
-        conexion = sql.connect(self.file_path)
+        connection = sql.connect(self.file_path)
         try:
-            self._check_integrity(conexion)
-            tables = [name for (name,) in conexion.execute(f"SELECT name {_SQLITE_TABLES}")]
-            self._get_file_check().single_table(tables)
+            self._check_integrity(connection)
+            tables = [name for (name,) in connection.execute(f"SELECT name {_SQLITE_TABLES}")]
+            self.file_check.single_table(tables)
             # Quoted so names with spaces or reserved words work; an inner quote is escaped by doubling it.
             quoted_name = '"' + tables[0].replace('"', '""') + '"'
-            return read_sql_query(f"SELECT * FROM {quoted_name}", conexion)
+            return read_sql_query(f"SELECT * FROM {quoted_name}", connection)
         finally:
-            conexion.close()
+            connection.close()
 
-    def _check_integrity(self, conexion: sql.Connection) -> None:
+    def _check_integrity(self, connection: sql.Connection) -> None:
         """Raise ``CorruptedFileError`` if the database is damaged or the file is not a SQLite database."""
         try:
             # A file that is not a database, or a badly damaged one, makes the pragma itself raise instead of reporting.
-            result = conexion.execute("PRAGMA integrity_check").fetchone()[0]
+            result = connection.execute("PRAGMA integrity_check").fetchone()[0]
         except sql.DatabaseError as e:
             raise CorruptedFileError(f"File '{self.file_path}' is corrupted or is not a SQLite database.") from e
         if result != "ok":
@@ -233,6 +231,9 @@ _READERS: tuple[tuple[tuple[str, ...], type[Reader]], ...] = (
     (ExcelFileCheck.extensions, ExcelReader),
     (SQLiteFileCheck.extensions, SQLiteReader),
 )
+
+# Every extension some reader accepts, in the order of ``_READERS``; useful for file dialogs.
+SUPPORTED_EXTENSIONS: tuple[str, ...] = tuple(extension for extensions, _ in _READERS for extension in extensions)
 
 
 def get_reader(file_path: str | Path) -> Reader:

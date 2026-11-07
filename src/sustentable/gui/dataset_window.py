@@ -23,7 +23,7 @@ from pysual import (
 from pysual.errors import LifecycleError
 
 from sustentable.core.io.exceptions import DataImportError
-from sustentable.core.io.readers import CSVFileCheck, ExcelFileCheck, SQLiteFileCheck, get_reader
+from sustentable.core.io.readers import SUPPORTED_EXTENSIONS, get_reader
 from sustentable.core.processing.data_processing import process_nan_values
 from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
@@ -34,11 +34,7 @@ from sustentable.gui.steps.dataset_step import DatasetStep
 from sustentable.gui.steps.preprocess_step import PreprocessStep
 from sustentable.gui.steps.split_step import SplitStep
 
-DATASET_EXTENSIONS: tuple[str, ...] = (
-    *CSVFileCheck.extensions,
-    *ExcelFileCheck.extensions,
-    *SQLiteFileCheck.extensions,
-)
+OPEN_ERROR_TITLE = "Unable to open dataset"
 
 
 class DatasetWindow(App):
@@ -84,7 +80,7 @@ class DatasetWindow(App):
         self.advance = Button(parent=footer, text="Continue", dock="right", width=176)
         self.back = SidebarButton(parent=footer, text="Back", dock="right", width=80)
         self.feedback = Label(parent=self, height=24)
-        self.error_dialog = ErrorDialog(title="Unable to open dataset")
+        self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
         self._refresh()
 
     async def columns_step_on_edited(self, event: UiEvent) -> None:
@@ -92,9 +88,7 @@ class DatasetWindow(App):
         if self._busy_message:
             return
         if self.selection != self.columns_step.selection:
-            self.selection = None
-            self._clear_split()
-            self.split_step.reset(None)
+            self._clear_selection()
         self._refresh()
         await self._show_raw_preview()
 
@@ -116,7 +110,6 @@ class DatasetWindow(App):
         """Treat the missing values of both subsets off the UI thread; keep the previous state if it fails."""
         if self._busy_message or self.train_data is None or self.selection is None:
             return
-        self.error_dialog.title = "Unable to preprocess data"
         train, test, columns = self.train_data, self.test_data, self._selected_columns()
         try:
             strategy, constant = self.preprocess_step.selected_strategy, self.preprocess_step.constant_value
@@ -128,7 +121,7 @@ class DatasetWindow(App):
         except (TypeError, ValueError, MemoryError) as error:
             self.preprocessed_data = None
             self.preprocess_step.clear_result()
-            self.error_dialog.show_error(str(error) or "Not enough memory to preprocess the dataset.")
+            self.error_dialog.show_error(str(error) or "Not enough memory to preprocess the dataset.", title="Unable to preprocess data")
             self._refresh()
             await self._show_raw_preview()
             return
@@ -167,8 +160,7 @@ class DatasetWindow(App):
                 async with self._busy("Splitting dataset…"):
                     self.train_data, self.test_data = await self.split_step.split()
             except (TypeError, ValueError, MemoryError) as error:
-                self.error_dialog.title = "Unable to split dataset"
-                self.error_dialog.show_error(str(error) or "Not enough memory to split the dataset.")
+                self.error_dialog.show_error(str(error) or "Not enough memory to split the dataset.", title="Unable to split dataset")
                 return
             self.preprocess_step.load(self.train_data, self.test_data, self._selected_columns())
             # Without missing values the split is already usable and preprocessing can be skipped.
@@ -223,6 +215,12 @@ class DatasetWindow(App):
         inputs, output = self.selection
         return [*inputs, output]
 
+    def _clear_selection(self) -> None:
+        """Discard the confirmed columns and the split that depends on them."""
+        self.selection = None
+        self._clear_split()
+        self.split_step.reset(None)
+
     def _clear_split(self) -> None:
         """Discard the confirmed subsets and everything derived from them."""
         self.train_data = self.test_data = self.preprocessed_data = None
@@ -232,11 +230,10 @@ class DatasetWindow(App):
         """Choose a file, preserving the workflow when the dialog is cancelled or fails."""
         if self._busy_message:
             return
-        self.error_dialog.title = "Unable to open dataset"
         try:
-            chosen = await self.choose_path(title="Open dataset", extensions=DATASET_EXTENSIONS)
+            chosen = await self.choose_path(title="Open dataset", extensions=SUPPORTED_EXTENSIONS)
         except (CapabilityError, OSError, ValueError) as error:
-            self.error_dialog.show_error(str(error))
+            self.error_dialog.show_error(str(error), title=OPEN_ERROR_TITLE)
             return
         except LifecycleError:
             return
@@ -250,16 +247,13 @@ class DatasetWindow(App):
         """
         if self._busy_message:
             return
-        self.error_dialog.title = "Unable to open dataset"
         async with self._busy("Loading dataset…"):
             try:
                 absolute_path, frame = await asyncio.to_thread(_read_dataset, path)
                 await self.dataset_grid.load_dataframe_async(frame)
                 self.columns_step.load_columns(frame.columns)
                 self.dataset = frame
-                self.selection = None
-                self._clear_split()
-                self.split_step.reset(None)
+                self._clear_selection()
                 self.dataset_step.path_text.text = absolute_path
                 self._showing_processed = False
                 self._dataset_name = Path(absolute_path).name
@@ -267,7 +261,7 @@ class DatasetWindow(App):
                 self.preview_label.text = self._dataset_caption
                 self.wizard.reset()
             except (DataImportError, OSError, TypeError, ValueError) as error:
-                self.error_dialog.show_error(str(error))
+                self.error_dialog.show_error(str(error), title=OPEN_ERROR_TITLE)
 
     @asynccontextmanager
     async def _busy(self, message: str) -> AsyncIterator[None]:

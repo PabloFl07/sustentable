@@ -7,6 +7,9 @@ from typing import ClassVar
 from pysual import Control, Dirty, Painter, Rect, prop
 from pysual.host import Host
 
+# Positions the arc goes through in one turn, advanced at this many per second.
+_PHASES = 12
+
 
 class LoadingSpinner(Control):
     """Draw a themed activity ring; the caller owns and cancels the ``animate`` coroutine."""
@@ -23,8 +26,8 @@ class LoadingSpinner(Control):
         """Advance the ring on the UI loop until the owning load cancels this coroutine."""
         self.phase = 0
         while True:
-            await asyncio.sleep(1 / 12)
-            self.phase = (self.phase + 1) % 12
+            await asyncio.sleep(1 / _PHASES)
+            self.phase = (self.phase + 1) % _PHASES
 
     def paint(self, painter: Painter, /) -> None:
         """Draw the track and rotating arc using the theme's progress colors."""
@@ -39,7 +42,7 @@ class LoadingSpinner(Control):
         color = fill.fill or fill.foreground
         circle = tuple((cx + radius * cos(tau * step / 36), cy + radius * sin(tau * step / 36)) for step in range(37))
         painter.lines(circle, track.fill or track.foreground, thickness)
-        start = tau * self.phase / 12
+        start = tau * self.phase / _PHASES
         arc = tuple((cx + radius * cos(start + tau * step / 32), cy + radius * sin(start + tau * step / 32)) for step in range(25))
         painter.lines(arc, color, thickness)
         for x, y in (arc[0], arc[-1]):

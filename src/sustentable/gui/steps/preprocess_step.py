@@ -14,6 +14,7 @@ STRATEGY_LABELS: dict[NanStrategy, str] = {
     NanStrategy.MEDIAN: "Fill with the column median",
     NanStrategy.CONSTANT: "Fill with a constant value",
 }
+_NO_SPLIT = "Confirm the split before preprocessing."
 
 
 class PreprocessStep(Step):
@@ -35,7 +36,7 @@ class PreprocessStep(Step):
         self._rows: list[Label] = []
 
         report = Container(parent=self, layout="stack", spacing=4, flex=1)
-        self.summary = Label(parent=report, text="Confirm the split before preprocessing.", height=24)
+        self.summary = Label(parent=report, text=_NO_SPLIT, height=24)
         self.report_list = ScrollArea(parent=report, layout="stack", spacing=4, flex=1)
 
         options = Container(parent=self, layout="stack", spacing=8, flex=1)
@@ -83,9 +84,7 @@ class PreprocessStep(Step):
     @property
     def problem(self) -> str:
         """Explain what prevents continuing to the model."""
-        if self._report is None:
-            return "Confirm the split before preprocessing."
-        return ""
+        return _NO_SPLIT if self._report is None else ""
 
     def show_result(self, result: PreprocessResult) -> None:
         """Describe the outcome of an applied strategy for each subset."""
@@ -105,7 +104,7 @@ class PreprocessStep(Step):
     @property
     def remaining_missing_values(self) -> tuple[int, int]:
         """Missing values shown by the counters for the training and test subsets."""
-        report = self._current if self._current is not None else self._report
+        report = self._shown_report
         return (0, 0) if report is None else (int(report.train.sum()), int(report.test.sum()))
 
     def strategy_on_changed(self, event: ChangeEvent[int]) -> None:
@@ -131,9 +130,10 @@ class PreprocessStep(Step):
         self.constant.enabled = self.selected_strategy is NanStrategy.CONSTANT
         self.apply_button.enabled = self.has_missing_values
         if self._report is None:
-            self.summary.text = "Confirm the split before preprocessing."
+            self.summary.text = _NO_SPLIT
             return
-        for row, original, current in zip(self._rows, self._report.itertuples(index=False), self._counts(), strict=True):
+        shown = self._shown_report.itertuples(index=False)
+        for row, original, current in zip(self._rows, self._report.itertuples(index=False), shown, strict=True):
             row.text = f"{original.column}: training {_count(current.train, original.train)} · test {_count(current.test, original.test)}"
         train, test = self.remaining_missing_values
         if not self.has_missing_values:
@@ -143,10 +143,10 @@ class PreprocessStep(Step):
         else:
             self.summary.text = f"Missing values: training {train:,} · test {test:,}"
 
-    def _counts(self) -> list:
-        """Rows of the counters currently shown: the processed result when there is one, otherwise the split."""
-        report = self._current if self._current is not None else self._report
-        return list(report.itertuples(index=False))
+    @property
+    def _shown_report(self) -> DataFrame | None:
+        """Counters currently shown: the processed result when there is one, otherwise the split."""
+        return self._current if self._current is not None else self._report
 
 
 def _count(current: int, original: int) -> str:
