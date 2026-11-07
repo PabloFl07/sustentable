@@ -1,1 +1,1 @@
-"""Data loading: read dataset files into DataFrames, with no GUI dependencies."""
+"""Application logic with no GUI dependencies: file I/O and data processing."""

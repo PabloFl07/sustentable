@@ -7,7 +7,7 @@ import pytest
 from pysual import App, Button, ClickEvent, Container, Label, SubWindow
 from pysual.errors import LifecycleError
 
-from sustentable.gui.error_dialog import ErrorDialog
+from sustentable.gui.controls.error_dialog import ErrorDialog
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ from typing import ClassVar
 from pandas import DataFrame
 from pysual import ChangeEvent, Container, Event, Label, Slider, Step, UiEvent
 
-from sustentable.core.data_shufler import data_shuffler
+from sustentable.core.processing.data_shufler import data_shuffler
 
 
 class SplitStep(Step):

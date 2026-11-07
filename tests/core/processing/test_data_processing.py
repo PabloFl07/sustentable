@@ -5,7 +5,7 @@ import math
 import pytest
 from pandas import DataFrame
 
-from sustentable.core.data_processing import NanStrategy, detect_nan_values, has_nan_values, parse_constant, process_nan_values
+from sustentable.core.processing.data_processing import NanStrategy, detect_nan_values, has_nan_values, parse_constant, process_nan_values
 
 NAN = math.nan
 COLUMNS = ["x", "y"]

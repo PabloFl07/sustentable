@@ -6,7 +6,7 @@ parsing, so it is the one that turns the errors of its library into ``CorruptedF
 
 ``Reader.validate()`` runs the checks that need no parsing (the path exists, is a readable, non-empty file and has a
 supported extension). ``Reader.read()`` runs them, parses the file once and checks that the result has data. Every
-error derives from ``DataImportError`` (see ``sustentable.core.exceptions``).
+error derives from ``DataImportError`` (see ``sustentable.core.io.exceptions``).
 """
 
 import sqlite3 as sql
@@ -19,7 +19,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from pandas import DataFrame, errors, read_csv, read_excel, read_sql_query
 from xlrd.biffh import XLRDError
 
-from sustentable.core.exceptions import (
+from sustentable.core.io.exceptions import (
     CorruptedFileError,
     EmptyFileError,
     MissingFileError,

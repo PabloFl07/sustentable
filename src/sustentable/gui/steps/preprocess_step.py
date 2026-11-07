@@ -6,7 +6,7 @@ from typing import ClassVar
 from pandas import DataFrame
 from pysual import Button, ChangeEvent, ClickEvent, Container, Dropdown, Event, Label, ScrollArea, Step, TextBox, UiEvent
 
-from sustentable.core.data_processing import NanStrategy, PreprocessResult, detect_nan_values, parse_constant
+from sustentable.core.processing.data_processing import NanStrategy, PreprocessResult, detect_nan_values, parse_constant
 
 STRATEGY_LABELS: dict[NanStrategy, str] = {
     NanStrategy.DELETE: "Delete rows with missing values",

@@ -11,7 +11,7 @@ import pytest
 from pandas import DataFrame
 from pandas.api.types import is_integer_dtype
 
-from sustentable.core.exceptions import (
+from sustentable.core.io.exceptions import (
     CorruptedFileError,
     DataImportError,
     EmptyFileError,
@@ -21,7 +21,7 @@ from sustentable.core.exceptions import (
     UnreadableFileError,
     UnsupportedExtensionError,
 )
-from sustentable.core.readers import _READERS, CSVReader, ExcelReader, SQLiteReader, get_reader
+from sustentable.core.io.readers import _READERS, CSVReader, ExcelReader, SQLiteReader, get_reader
 
 
 def _assert_people(data: DataFrame) -> None:
