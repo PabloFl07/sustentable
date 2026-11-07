@@ -309,7 +309,7 @@ def test_pending_split_stays_responsive_ignores_duplicate_clicks_and_recovers(
             assert await asyncio.to_thread(finished.wait, 5)
         assert window.wizard.enabled and not window.loading_row.visible
         if fail:
-            errors.assert_called_once_with("Cannot split these rows.")
+            errors.assert_called_once_with("Cannot split these rows.", title="Unable to split dataset")
             assert window.wizard.selected_index == 2 and window.advance.enabled
             assert window.train_data is None and window.test_data is None
             monkeypatch.setattr(split_step, "data_shuffler", split)

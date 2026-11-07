@@ -1,3 +1,5 @@
+"""Shuffle a dataset and split it into test and training subsets."""
+
 import pandas as pd
 
 

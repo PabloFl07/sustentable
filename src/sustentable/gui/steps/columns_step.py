@@ -128,7 +128,7 @@ class ColumnsStep(Step):
         self.edited.emit(UiEvent(source=self, origin=event.origin))
 
     def _refresh_mode(self) -> None:
-        """Disable the Y column as an input and show the regression mode, formula, and confirm state."""
+        """Disable the Y column as an input and show the regression mode, chips, and formula."""
         output = self._output_position()
         for position, check in enumerate(self._inputs):
             check.enabled = position != output
@@ -144,10 +144,7 @@ class ColumnsStep(Step):
             self.formula_box.visible = False
             return
 
-        if len(inputs) == 1:
-            self.mode.text = "Simple regression"
-        else:
-            self.mode.text = "Multiple regression"
+        self.mode.text = "Simple regression" if len(inputs) == 1 else "Multiple regression"
         input_texts = [self._texts[position] for position in inputs]
         self._show_chips(self.output_chips, [self._texts[output]], primary=True)
         self.input_caption.text = "INPUTS (X) · " + str(len(inputs))

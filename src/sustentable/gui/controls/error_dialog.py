@@ -29,11 +29,13 @@ class ErrorDialog(SubWindow):
         self.actions = Container(layout="dock", height=36)
         self.ok = Button(parent=self.actions, text="OK", dock="right", width=100)
 
-    def show_error(self, message: str) -> None:
-        """Replace the message and open modally without blocking the UI event loop."""
+    def show_error(self, message: str, title: str | None = None) -> None:
+        """Replace the message, and the title when given, and open modally without blocking the UI event loop."""
         owner = self.parent
         if owner is None:
             raise LifecycleError("Attach the error dialog to an owner before showing it.")
+        if title is not None:
+            self.title = title
         self.message_text.text = message
         self.message_area.update(scroll_x=0, scroll_y=0)
         area = owner.content_bounds(owner.bounds)

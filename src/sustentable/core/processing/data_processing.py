@@ -60,7 +60,7 @@ def detect_nan_values(train: DataFrame, test: DataFrame, columns: Iterable[Hasha
 def has_nan_values(train: DataFrame, test: DataFrame, columns: Iterable[Hashable]) -> bool:
     """Return whether any selected column has a missing value in either subset."""
     selected = _selected_columns(train, test, columns)
-    return bool(train[selected].isna().to_numpy().any() or test[selected].isna().to_numpy().any())
+    return bool(_missing_count(train, selected) or _missing_count(test, selected))
 
 
 def parse_constant(text: str) -> float:
@@ -120,8 +120,7 @@ def process_nan_values(
         return PreprocessResult(processed_train, processed_test, strategy, len(train) - len(processed_train), len(test) - len(processed_test))
 
     fill_values = _fill_values(train, selected, strategy, constant_value)
-    train_changes = int(train[selected].isna().to_numpy().sum())
-    test_changes = int(test[selected].isna().to_numpy().sum())
+    train_changes, test_changes = _missing_count(train, selected), _missing_count(test, selected)
     return PreprocessResult(train.fillna(fill_values), test.fillna(fill_values), strategy, train_changes, test_changes)
 
 
@@ -144,6 +143,11 @@ def _fill_values(train: DataFrame, columns: list[Hashable], strategy: NanStrateg
             raise ValueError(f"Column '{column}' has no values in the training subset to compute its {strategy}.")
         values[column] = float(value)
     return values
+
+
+def _missing_count(frame: DataFrame, columns: list[Hashable]) -> int:
+    """Count the missing values of ``columns`` in ``frame``."""
+    return int(frame[columns].isna().to_numpy().sum())
 
 
 def _selected_columns(train: DataFrame, test: DataFrame, columns: Iterable[Hashable]) -> list[Hashable]:
