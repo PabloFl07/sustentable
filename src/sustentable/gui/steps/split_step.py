@@ -6,7 +6,7 @@ from typing import ClassVar
 from pandas import DataFrame
 from pysual import ChangeEvent, Container, Event, Label, Slider, Step, UiEvent
 
-from sustentable.core.processing.data_shuffler import data_shuffler
+from sustentable.core.processing.data_split import count_test_rows, split_dataset
 
 DEFAULT_TEST_PERCENT = 20
 # Fixed so the same dataset and percentage always produce the same subsets.
@@ -51,15 +51,14 @@ class SplitStep(Step):
     def row_counts(self) -> tuple[int, int]:
         """Match the backend's rounding without shuffling or copying any rows."""
         total = 0 if self._frame is None else len(self._frame)
-        test = round(total * (self.share.value / 100))
+        test = count_test_rows(total, self.share.value / 100)
         return total - test, test
 
     async def split(self) -> tuple[DataFrame, DataFrame]:
         """Create the confirmed subsets once, off the UI thread, using the existing seed."""
         if problem := self.problem:
             raise ValueError(problem)
-        test, train = await asyncio.to_thread(data_shuffler, self._frame, seed=SPLIT_SEED, test_percent=float(self.share.value / 100))
-        return train, test
+        return await asyncio.to_thread(split_dataset, self._frame, self.share.value / 100, SPLIT_SEED)
 
     def share_on_changed(self, event: ChangeEvent[float]) -> None:
         """Update cheap live estimates; actual data processing belongs to confirmation."""
