@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import xlwt
 from openpyxl import Workbook
 
 CSV_TEXT = "name,age\nJosé,19\nBegoña,21\n"
@@ -23,6 +24,18 @@ def _write_xlsx(path: Path, *sheets: list[tuple]) -> Path:
         for row in rows:
             sheet.append(row)
     workbook.save(path)
+    return path
+
+
+def _write_xls(path: Path, *sheets: list[tuple]) -> Path:
+    """Write an .xls (Excel 97-2003) with one worksheet per item of ``sheets``, each one a list of rows."""
+    workbook = xlwt.Workbook()
+    for number, rows in enumerate(sheets, start=1):
+        sheet = workbook.add_sheet(f"Sheet{number}")
+        for row_index, row in enumerate(rows):
+            for column_index, value in enumerate(row):
+                sheet.write(row_index, column_index, value)
+    workbook.save(str(path))
     return path
 
 
@@ -120,6 +133,38 @@ def example_latin1_csv(tmp_path):
 
 
 @pytest.fixture
+def example_short_row_csv(tmp_path):
+    """CSV with a row that has fewer fields than the header."""
+    path = tmp_path / "example.csv"
+    path.write_text("name,age\nJosé,19\nBegoña\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def example_blank_lines_between_rows_csv(tmp_path):
+    """Valid CSV with blank lines between the rows."""
+    path = tmp_path / "example.csv"
+    path.write_text("name,age\n\nJosé,19\n\n\nBegoña,21\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def example_quoted_fields_csv(tmp_path):
+    """CSV with quoted fields that hold a comma and a line break."""
+    path = tmp_path / "example.csv"
+    path.write_text('name,age\n"Pérez, José",19\n"Begoña\nMaría",21\n', encoding="utf-8")
+    return path
+
+
+@pytest.fixture
+def example_duplicate_columns_csv(tmp_path):
+    """CSV with two columns of the same name."""
+    path = tmp_path / "example.csv"
+    path.write_text("name,name\nJosé,Begoña\n", encoding="utf-8")
+    return path
+
+
+@pytest.fixture
 def example_ragged_csv(tmp_path):
     """CSV with a row that has more fields than the header (treated as corrupted by design)."""
     path = tmp_path / "example.csv"
@@ -208,6 +253,18 @@ def example_two_sheets_xlsx(tmp_path):
 
 
 @pytest.fixture
+def example_xls(tmp_path):
+    """Valid .xls (Excel 97-2003), with age stored as a number."""
+    return _write_xls(tmp_path / "example.xls", [("name", "age"), ("José", 19), ("Begoña", 21)])
+
+
+@pytest.fixture
+def example_two_sheets_xls(tmp_path):
+    """.xls with two worksheets with data."""
+    return _write_xls(tmp_path / "example.xls", [("name", "age"), ("José", 19)], [("city",), ("Lugo",)])
+
+
+@pytest.fixture
 def example_unreadable_xlsx(example_xlsx):
     """Valid .xlsx without read permissions."""
     example_xlsx.chmod(0)
@@ -226,6 +283,16 @@ def example_sqlite(tmp_path):
         tmp_path / "example.db",
         "CREATE TABLE people (name TEXT, age INTEGER)",
         "INSERT INTO people VALUES ('José', 19), ('Begoña', 21)",
+    )
+
+
+@pytest.fixture
+def example_quoted_name_sqlite(tmp_path):
+    """Valid database whose only table has a name with a space and double quotes."""
+    return _write_sqlite(
+        tmp_path / "example.db",
+        'CREATE TABLE "mis ""datos""" (name TEXT, age INTEGER)',
+        'INSERT INTO "mis ""datos""" VALUES (\'José\', 19), (\'Begoña\', 21)',
     )
 
 

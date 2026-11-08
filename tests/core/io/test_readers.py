@@ -1,14 +1,24 @@
 """Tests for the data import module.
 
+What is covered, in the order of the file:
+
+- ``read()`` on valid files: CSV, xlsx, xls and SQLite return their data, with any path format, and reading never
+  modifies or locks the file. Edge cases of each format (short CSV rows, quoted fields, two worksheets...) are here too.
+- ``read()`` on invalid files: each problem raises its own ``DataImportError`` subclass, and ``validate()`` only
+  catches the ones that need no parsing.
+- ``get_reader()`` picks the reader from the extension, and ``Reader.file_path`` is always a ``Path``.
+- The exception hierarchy.
+
 The example files are fixtures defined in ``conftest.py``. Fixtures cannot be passed to ``parametrize`` directly,
 so the tests receive their names and get the file with ``request.getfixturevalue()``.
 """
 
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
-from pandas import DataFrame
+from pandas import DataFrame, isna
 from pandas.api.types import is_integer_dtype
 
 from sustentable.core.io.exceptions import (
@@ -44,12 +54,15 @@ def _assert_people(data: DataFrame) -> None:
         "example_csv",
         "example_uppercase_csv",
         "example_bom_csv",
+        "example_blank_lines_between_rows_csv",
         pytest.param(
             "example_semicolon_csv",
             marks=pytest.mark.xfail(strict=True, reason="CSVReader does not detect the separator, so it reads a single 'name;age' column"),
         ),
         "example_xlsx",
+        "example_xls",
         "example_sqlite",
+        "example_quoted_name_sqlite",
     ],
 )
 def test_read_returns_file_content(request, fixture_name):
@@ -59,7 +72,7 @@ def test_read_returns_file_content(request, fixture_name):
 
 
 @pytest.mark.parametrize("absolute", [True, False], ids=["absolute", "relative"])
-@pytest.mark.parametrize("fixture_name", ["example_csv", "example_xlsx", "example_sqlite"])
+@pytest.mark.parametrize("fixture_name", ["example_csv", "example_xlsx", "example_xls", "example_sqlite"])
 def test_read_with_path_formats(request, monkeypatch, tmp_path, fixture_name, absolute):
     """``get_reader()`` and ``read()`` accept absolute and relative paths with spaces, accents and ñ."""
     source = request.getfixturevalue(fixture_name)
@@ -85,6 +98,65 @@ def test_read_follows_symlink(tmp_path, example_csv):
     except OSError as error:
         pytest.skip(f"Symbolic links cannot be created here: {error}")
     _assert_people(CSVReader(link).read())
+
+
+def test_read_csv_short_row_filled_with_nan(example_short_row_csv):
+    """A row with fewer fields than the header is kept, and its missing fields are NaN."""
+    data = CSVReader(example_short_row_csv).read()
+    assert list(data.columns) == ["name", "age"]
+    assert data["name"].tolist() == ["José", "Begoña"]
+    assert data.loc[0, "age"] == 19
+    assert isna(data.loc[1, "age"])
+
+
+@pytest.mark.parametrize("fixture_name", ["example_two_sheets_xlsx", "example_two_sheets_xls"])
+def test_read_excel_only_first_sheet(request, fixture_name):
+    """A workbook with two worksheets returns only the first one, without the columns of the second."""
+    data = ExcelReader(request.getfixturevalue(fixture_name)).read()
+    assert list(data.columns) == ["name", "age"]
+    assert data.values.tolist() == [["José", 19]]
+
+
+def test_read_csv_quoted_fields(example_quoted_fields_csv):
+    """A comma or a line break inside a quoted field is part of the value, not a separator."""
+    data = CSVReader(example_quoted_fields_csv).read()
+    assert data.values.tolist() == [["Pérez, José", 19], ["Begoña\nMaría", 21]]
+
+
+def test_read_csv_duplicate_columns_renamed(example_duplicate_columns_csv):
+    """Two columns with the same name are both kept: pandas renames the second one to ``name.1`` without warning."""
+    data = CSVReader(example_duplicate_columns_csv).read()
+    assert list(data.columns) == ["name", "name.1"]
+    assert data.values.tolist() == [["José", "Begoña"]]
+
+
+@pytest.mark.parametrize("fixture_name", ["example_csv", "example_xlsx", "example_xls", "example_sqlite"])
+def test_read_does_not_modify_file(request, fixture_name):
+    """``read()`` leaves the file byte for byte as it was and creates no other file, such as a SQLite journal."""
+    path = request.getfixturevalue(fixture_name)
+    content_before = path.read_bytes()
+    mtime_before = path.stat().st_mtime_ns
+    files_before = set(path.parent.iterdir())
+
+    get_reader(path).read()
+
+    assert path.read_bytes() == content_before
+    assert path.stat().st_mtime_ns == mtime_before
+    assert set(path.parent.iterdir()) == files_before
+
+
+def test_read_sqlite_does_not_lock_file(example_sqlite):
+    """``read()`` releases every lock, so another connection can write to the database right after."""
+    SQLiteReader(example_sqlite).read()
+
+    # An exclusive lock can only be taken if read() closed its connection. timeout=0 fails at once instead of waiting.
+    connection = sqlite3.connect(example_sqlite, timeout=0)
+    try:
+        connection.execute("BEGIN EXCLUSIVE")
+        connection.execute("INSERT INTO people VALUES ('Xoán', 30)")
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def test_read_sqlite_ignores_internal_tables_views_and_indexes(example_autoincrement_sqlite):
@@ -151,6 +223,25 @@ def test_read_raises_specific_error(request, reader_class, fixture_name, error):
     path = request.getfixturevalue(fixture_name)
     with pytest.raises(error):
         reader_class(path).read()
+
+
+@pytest.mark.parametrize(
+    ("reader_class", "fixture_name", "error"),
+    [
+        (CSVReader, "example_latin1_csv", CorruptedFileError),
+        (CSVReader, "example_header_only_csv", EmptyFileError),
+        (ExcelReader, "example_text_xlsx", CorruptedFileError),
+        (ExcelReader, "example_header_only_xlsx", EmptyFileError),
+        (SQLiteReader, "example_text_sqlite", CorruptedFileError),
+        (SQLiteReader, "example_two_tables_sqlite", MultipleTablesError),
+    ],
+)
+def test_validate_does_not_parse_content(request, reader_class, fixture_name, error):
+    """``validate()`` only checks the file system, so a file with bad content passes it and ``read()`` is the one that fails."""
+    reader = reader_class(request.getfixturevalue(fixture_name))
+    reader.validate()
+    with pytest.raises(error):
+        reader.read()
 
 
 # ----------------------------------------------------------------------------
