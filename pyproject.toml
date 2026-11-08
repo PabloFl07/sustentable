@@ -30,6 +30,7 @@ build-backend = "uv_build"
 dev = [
     "pre-commit>=4.6.2",
     "ruff>=0.17.0",
+    "xlwt>=1.3.0",
 ]
 
 [tool.ruff]
