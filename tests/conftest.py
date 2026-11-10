@@ -150,9 +150,17 @@ def example_blank_lines_between_rows_csv(tmp_path):
 
 @pytest.fixture
 def example_quoted_fields_csv(tmp_path):
-    """CSV with quoted fields that hold a comma and a line break."""
+    """CSV with quoted fields that hold a comma and a line break, saved with Unix line endings."""
     path = tmp_path / "example.csv"
-    path.write_text('name,age\n"Pérez, José",19\n"Begoña\nMaría",21\n', encoding="utf-8")
+    path.write_text('name,age\n"Pérez, José",19\n"Begoña\nMaría",21\n', encoding="utf-8", newline="\n")
+    return path
+
+
+@pytest.fixture
+def example_crlf_quoted_fields_csv(tmp_path):
+    """The same CSV saved with Windows line endings, which are also used inside the quoted field."""
+    path = tmp_path / "example.csv"
+    path.write_bytes('name,age\r\n"Pérez, José",19\r\n"Begoña\r\nMaría",21\r\n'.encode())
     return path
 
 

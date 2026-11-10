@@ -167,7 +167,10 @@ class CSVReader(Reader):
     def _parse(self) -> DataFrame | None:
         # Every row is parsed, because a malformed row can be anywhere in the file.
         try:
-            return read_csv(self.file_path, header=0)
+            # Text mode turns \r\n and \r into \n, so a line break inside a quoted value reads the same whatever system
+            # saved the file. utf-8-sig drops the BOM Excel writes, as pandas does when it opens the path itself.
+            with self.file_path.open(encoding="utf-8-sig") as file:
+                return read_csv(file, header=0)
         except errors.EmptyDataError:
             # Only blank lines: the file is empty, not corrupted, so not_empty() reports it.
             return None

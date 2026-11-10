@@ -117,9 +117,10 @@ def test_read_excel_only_first_sheet(request, fixture_name):
     assert data.values.tolist() == [["José", 19]]
 
 
-def test_read_csv_quoted_fields(example_quoted_fields_csv):
-    """A comma or a line break inside a quoted field is part of the value, not a separator."""
-    data = CSVReader(example_quoted_fields_csv).read()
+@pytest.mark.parametrize("fixture_name", ["example_quoted_fields_csv", "example_crlf_quoted_fields_csv"], ids=["lf", "crlf"])
+def test_read_csv_quoted_fields(request, fixture_name):
+    """A comma or a line break inside a quoted field is part of the value, and the line break is always ``\\n``."""
+    data = CSVReader(request.getfixturevalue(fixture_name)).read()
     assert data.values.tolist() == [["Pérez, José", 19], ["Begoña\nMaría", 21]]
 
 
