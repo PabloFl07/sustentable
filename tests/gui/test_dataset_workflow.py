@@ -9,15 +9,17 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pandas import DataFrame
-from pysual import ClickEvent
+from pysual import ClickEvent, UiEvent
 from pysual.events import Dispatcher
 
 from sustentable.core.processing.data_processing import NanStrategy, detect_nan_values, has_nan_values
+from sustentable.core.processing.data_split import split_dataset
 from sustentable.gui import dataset_window
 from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.dataset_window import MODEL_ERROR_TITLE, DatasetWindow
 from sustentable.gui.steps import split_step
 from sustentable.gui.steps.preprocess_step import STRATEGY_LABELS
+from sustentable.gui.steps.split_step import DEFAULT_TEST_PERCENT, SPLIT_SEED
 
 
 class WorkflowWindow(DatasetWindow):
@@ -711,5 +713,694 @@ def test_model_errors_are_reported_and_the_window_keeps_working(
         assert window.model is previous and window.fit_chart.point_series is points and window.fit_panel.visible
         assert window.model_step.formula.text == previous.formula
         assert window.wizard.enabled and window.model_step.create_button.enabled
+
+    asyncio.run(exercise())
+
+
+# ----------------------------------------------------------------------------
+# Column validation
+# ----------------------------------------------------------------------------
+
+PREPROCESS_ERROR_TITLE = "Unable to preprocess data"
+
+
+def test_confirming_needs_an_input_column_even_when_the_output_is_chosen(window: WorkflowWindow, dataset_path: Path) -> None:
+    """With only Y chosen, the footer cannot confirm, the hint says what is missing and clicking does nothing."""
+
+    async def exercise() -> None:
+        await window.show_dataset(dataset_path)
+        await window.press_continue()
+        await window.choose_columns((), output=2)
+        assert window.columns_step.output_column == "energy" and window.columns_step.input_columns == []
+        assert not window.advance.enabled
+        assert window.feedback.text == "Choose at least one input column (X), different from the output."
+        assert window.columns_step.mode.text == "Choose at least one X and one Y"
+        assert not window.columns_step.summary_box.visible
+        await window.press_continue()
+        assert window.selection is None and window.wizard.selected_index == 1
+        await window.request_step(2)
+        assert window.wizard.selected_index == 1
+
+    asyncio.run(exercise())
+
+
+def test_a_single_column_dataset_has_no_possible_input(window: WorkflowWindow, tmp_path: Path) -> None:
+    """The only column can be Y but then has no X to pair with, so the selection cannot be confirmed."""
+    path = tmp_path / "single.csv"
+    DataFrame({"energy": range(10)}).to_csv(path, index=False)
+
+    async def exercise() -> None:
+        await window.show_dataset(path)
+        await window.press_continue()
+        step = window.columns_step
+        assert not window.advance.enabled and window.feedback.text == "Choose an output column (Y)."
+        step._outputs[0].checked = True
+        await window.settle()
+        assert not step._inputs[0].enabled and not step._inputs[0].checked
+        assert step.input_columns == [] and not window.advance.enabled
+        assert "at least one input column" in window.feedback.text
+        await window.press_continue()
+        assert window.selection is None and window.wizard.selected_index == 1
+
+    asyncio.run(exercise())
+
+
+def test_simple_and_multiple_regression_modes_follow_the_number_of_inputs(window: WorkflowWindow, dataset_path: Path) -> None:
+    """One X is a simple regression, several X a multiple one, and the summary chips follow every change."""
+
+    async def exercise() -> None:
+        await window.show_dataset(dataset_path)
+        await window.press_continue()
+        step = window.columns_step
+        await window.choose_columns((0,))
+        assert step.mode.text == "Simple regression"
+        assert step.input_chip_texts == ["area"] and step.output_chip_texts == ["energy"]
+        assert step.input_caption.text == "INPUTS (X) · 1" and step.summary_box.visible
+        await window.choose_columns((0, 1))
+        assert step.mode.text == "Multiple regression" and step.input_caption.text == "INPUTS (X) · 2"
+        assert step.input_chip_texts == ["area", "occupants"]
+        await window.choose_columns((1,))
+        assert step.mode.text == "Simple regression" and step.input_chip_texts == ["occupants"]
+        await window.choose_columns(())
+        assert step.mode.text == "Choose at least one X and one Y" and step.input_chip_texts == []
+        await window.choose_columns((1,))
+        await window.press_continue()
+        assert window.selection == (["occupants"], "energy")
+
+    asyncio.run(exercise())
+
+
+def test_changing_the_output_frees_the_previous_one_as_an_input(window: WorkflowWindow, dataset_path: Path) -> None:
+    """The former Y can be checked as X again, and the new Y is removed from the inputs."""
+
+    async def exercise() -> None:
+        await window.show_dataset(dataset_path)
+        await window.press_continue()
+        step = window.columns_step
+        await window.choose_columns((0, 1), output=2)
+        assert [check.enabled for check in step._inputs] == [True, True, False]
+        step._outputs[1].checked = True
+        await window.settle()
+        assert step.output_column == "occupants"
+        assert [check.enabled for check in step._inputs] == [True, False, True]
+        assert step.input_columns == ["area"], "The new Y is dropped from the inputs."
+        step._inputs[2].checked = True
+        await window.settle()
+        assert step.input_columns == ["area", "energy"] and step.mode.text == "Multiple regression"
+        await window.press_continue()
+        assert window.selection == (["area", "energy"], "occupants")
+
+    asyncio.run(exercise())
+
+
+@pytest.fixture
+def text_path(tmp_path: Path) -> Path:
+    """Create numeric area and energy columns plus a text column, with no missing values."""
+    path = tmp_path / "text.csv"
+    DataFrame({"area": range(10), "city": list("abcdefghij"), "energy": range(20, 30)}).to_csv(path, index=False)
+    return path
+
+
+@pytest.mark.parametrize(("inputs", "output", "column"), [((1,), 2, "city"), ((0,), 1, "city")])
+def test_text_columns_are_accepted_by_the_selection_and_rejected_when_the_model_is_created(
+    window: WorkflowWindow, text_path: Path, monkeypatch: pytest.MonkeyPatch, inputs: tuple[int, ...], output: int, column: str
+) -> None:
+    """Selecting a text X or Y is allowed, the split and preprocessing pass, and the error appears when the model is created."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+
+    async def exercise() -> None:
+        await _open_model_step_with(window, text_path, inputs, output)
+        assert window.selection is not None and window.preprocessed_data is not None
+        await window.create_model()
+        errors.assert_called_once()
+        assert f"'{column}' is not numeric" in errors.call_args.args[0]
+        assert errors.call_args.kwargs == {"title": MODEL_ERROR_TITLE}
+        assert window.model is None and window.wizard.enabled and window.model_step.create_button.enabled
+
+    asyncio.run(exercise())
+
+
+async def _open_model_step_with(window: WorkflowWindow, path: Path, inputs: tuple[int, ...], output: int) -> None:
+    """Like ``_open_model_step`` but with an explicit output column."""
+    await window.show_dataset(path)
+    await window.press_continue()
+    await window.choose_columns(inputs, output)
+    for _ in range(3):
+        await window.press_continue()
+    assert window.wizard.selected_index == 4
+
+
+# ----------------------------------------------------------------------------
+# Preprocessing errors and missing-value placement
+# ----------------------------------------------------------------------------
+
+
+def _test_rows(rows: int = 10) -> list[int]:
+    """Original row positions that the default split sends to the test subset."""
+    _, test = split_dataset(DataFrame({"row": range(rows)}), DEFAULT_TEST_PERCENT / 100, SPLIT_SEED)
+    return list(test.row)
+
+
+def _write(path: Path, area: list[float | None], occupants: list[float | None] | None = None, energy: list[float | None] | None = None) -> Path:
+    DataFrame(
+        {"area": area, "occupants": occupants or list(range(10, 20)), "energy": energy or list(range(20, 30))},
+    ).to_csv(path, index=False)
+    return path
+
+
+def test_delete_that_empties_a_subset_reports_the_error_and_can_be_retried(
+    window: WorkflowWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting every test row leaves the test subset empty: error dialog, nothing applied, and another strategy still works."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+    empty_test = [None if row in _test_rows() else float(row) for row in range(10)]
+    path = _write(tmp_path / "all_test_missing.csv", empty_test)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, path)
+        await _apply(window, NanStrategy.DELETE)
+        errors.assert_called_once()
+        assert "test subset empty" in errors.call_args.args[0]
+        assert errors.call_args.kwargs == {"title": PREPROCESS_ERROR_TITLE}
+        assert window.preprocessed_data is None and not window.advance.enabled
+        assert window.preprocess_step.status.text == "" and window.wizard.enabled and not window.loading_row.visible
+        assert window.preprocess_step.apply_button.enabled
+        await _apply(window, NanStrategy.CONSTANT, "0")
+        assert errors.call_count == 1 and window.preprocessed_data is not None and window.advance.enabled
+
+    asyncio.run(exercise())
+
+
+def test_delete_that_empties_the_training_subset_reports_the_error(
+    window: WorkflowWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing values in every training row also block DELETE."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+    test_rows = _test_rows()
+    path = _write(tmp_path / "all_train_missing.csv", [float(row) if row in test_rows else None for row in range(10)])
+
+    async def exercise() -> None:
+        await _confirmed_split(window, path)
+        await _apply(window, NanStrategy.DELETE)
+        assert "training subset empty" in errors.call_args.args[0]
+        assert errors.call_args.kwargs == {"title": PREPROCESS_ERROR_TITLE} and window.preprocessed_data is None
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("strategy", [NanStrategy.MEAN, NanStrategy.MEDIAN])
+def test_mean_and_median_report_text_and_empty_columns_and_recover(
+    window: WorkflowWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strategy: NanStrategy
+) -> None:
+    """A text column or a column without training values cannot be averaged; the error keeps the step retryable."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+    path = tmp_path / "text_missing.csv"
+    DataFrame(
+        {
+            "area": [None if row in (1, 4) else float(row) for row in range(10)],
+            "city": [None if row == 2 else "x" for row in range(10)],
+            "empty": [None] * 10,
+            "energy": range(20, 30),
+        },
+    ).to_csv(path, index=False)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, path)
+        await window.request_step(1)
+        await window.choose_columns((0, 1), output=3)
+        await _confirm_to_preprocess(window)
+        await _apply(window, strategy)
+        assert "'city' is not numeric" in errors.call_args.args[0] and errors.call_args.kwargs == {"title": PREPROCESS_ERROR_TITLE}
+        assert window.preprocessed_data is None and not window.advance.enabled
+
+        await window.request_step(1)
+        await window.choose_columns((0, 2), output=3)
+        await _confirm_to_preprocess(window)
+        await _apply(window, strategy)
+        assert errors.call_count == 2 and "'empty'" in errors.call_args.args[0] and "no values" in errors.call_args.args[0]
+        assert window.preprocessed_data is None
+
+        await _apply(window, NanStrategy.CONSTANT, "0")
+        assert errors.call_count == 2 and window.preprocessed_data is not None and window.advance.enabled
+
+    asyncio.run(exercise())
+
+
+async def _confirm_to_preprocess(window: WorkflowWindow) -> None:
+    """Confirm the columns and the split again after the columns were edited."""
+    await window.press_continue()
+    await window.press_continue()
+    assert window.wizard.selected_index == 3
+
+
+def test_missing_values_only_in_the_output_or_only_in_test_are_treated(window: WorkflowWindow, tmp_path: Path) -> None:
+    """A gap in Y, or in a test row alone, is reported per subset and filled with training statistics."""
+    test_rows = _test_rows()
+
+    async def exercise() -> None:
+        output_gap = _write(tmp_path / "y_gap.csv", list(map(float, range(10))), energy=[None if row == 3 else 20.0 + row for row in range(10)])
+        await _confirmed_split(window, output_gap)
+        step = window.preprocess_step
+        assert step.has_missing_values and step._rows[1].text.startswith("energy:") and step._rows[0].text == "area: training 0 · test 0"
+        await _apply(window, NanStrategy.MEAN)
+        assert not has_nan_values(*window.preprocessed_data, ["area", "energy"]) and window.advance.enabled
+
+        only_test = _write(tmp_path / "test_gap.csv", [None if row == test_rows[0] else float(row) for row in range(10)])
+        await window.show_dataset(only_test)
+        await _confirmed_split_again(window)
+        assert step.remaining_missing_values == (0, 1)
+        assert step.summary.text == "Missing values: training 0 · test 1"
+        await _apply(window, NanStrategy.MEDIAN)
+        train, test = window.preprocessed_data
+        assert test.area.isna().sum() == 0 and test.area.eq(window.train_data.area.median()).sum() == 1
+        assert "Test: 1 values filled" in step.status.text and "Training: 0 values filled" in step.status.text
+
+    asyncio.run(exercise())
+
+
+async def _confirmed_split_again(window: WorkflowWindow) -> None:
+    """Confirm columns and split on a freshly loaded dataset, starting from the dataset step."""
+    await window.press_continue()
+    await window.choose_columns()
+    await window.press_continue()
+    await window.press_continue()
+    assert window.wizard.selected_index == 3
+
+
+def test_missing_values_only_in_an_unselected_column_complete_the_step_without_asking(window: WorkflowWindow, tmp_path: Path) -> None:
+    """Gaps outside X and Y are not reported: the step is done, nothing needs applying and the workflow continues."""
+    path = _write(tmp_path / "unselected_gap.csv", list(map(float, range(10))), occupants=[None] * 10)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, path)
+        step = window.preprocess_step
+        assert not step.has_missing_values and step.remaining_missing_values == (0, 0)
+        assert step.summary.text == "No missing values in the selected columns. You can continue."
+        assert not step.apply_button.enabled and step.status.text == ""
+        assert window.preprocessed_data is not None and window.preprocessed_data[0] is window.train_data
+        assert step.completed and window.advance.enabled and window.advance.text == "Continue"
+        await window.press_continue()
+        assert window.wizard.selected_index == 4
+        await window.create_model()
+        assert window.model is not None
+
+    asyncio.run(exercise())
+
+
+# ----------------------------------------------------------------------------
+# Preprocessing worker
+# ----------------------------------------------------------------------------
+
+
+class _Gate:
+    """Replace ``process_nan_values`` with a worker that waits until the test releases it."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, target: str = "process_nan_values") -> None:
+        self.started, self.release, self.finished = ThreadEvent(), ThreadEvent(), ThreadEvent()
+        self.threads: list[int] = []
+        self.error: Exception | None = None
+        self._process = getattr(dataset_window, target)
+        monkeypatch.setattr(dataset_window, target, self)
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        self.threads.append(get_ident())
+        self.started.set()
+        try:
+            assert self.release.wait(5), "The test did not release the preprocessing worker."
+            if self.error is not None:
+                raise self.error
+            return self._process(*args, **kwargs)
+        finally:
+            self.finished.set()
+            self.started.clear()
+
+    def open(self) -> None:
+        """Let blocked and future calls through."""
+        self.release.set()
+
+
+async def _start_apply(window: WorkflowWindow, gate: _Gate, strategy: NanStrategy = NanStrategy.MEAN) -> asyncio.Task[None]:
+    window.preprocess_step.strategy.selected_index = list(STRATEGY_LABELS).index(strategy)
+    await window.settle()
+    button = window.preprocess_step.apply_button
+    pending = asyncio.create_task(window.preprocess_step_on_apply(ClickEvent(source=button)))
+    assert await asyncio.to_thread(gate.started.wait, 5)
+    return pending
+
+
+def test_preprocessing_runs_off_the_ui_thread_with_locked_controls_and_ignores_double_clicks(
+    window: WorkflowWindow, missing_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The slow treatment shows the loading row, disables navigation, keeps the UI live and runs once."""
+    gate = _Gate(monkeypatch)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        pending = await _start_apply(window, gate)
+        try:
+            assert gate.threads and gate.threads[0] != window.ui_thread_id()
+            assert not window.wizard.enabled and not window.advance.enabled and not window.back.enabled
+            assert not window.dataset_step.open_dataset.enabled
+            assert window.loading_row.visible and window.loading_label.text == "Preprocessing data…"
+            assert window.feedback.text == "Preprocessing data…"
+            phase = window.loading_spinner.phase
+            async with asyncio.timeout(5):
+                while window.loading_spinner.phase == phase:
+                    await asyncio.sleep(0.01)
+            button = window.preprocess_step.apply_button
+            for _ in range(3):
+                button.click.emit(ClickEvent(source=button))
+                await window.preprocess_step_on_apply(ClickEvent(source=button))
+            await window.advance_on_click(ClickEvent(source=window.advance))
+            assert len(gate.threads) == 1 and window.preprocessed_data is None
+        finally:
+            gate.open()
+            await pending
+        await window.settle()
+        assert len(gate.threads) == 1, "Only one treatment may run for repeated clicks."
+        assert window.preprocessed_data is not None and window.wizard.enabled and not window.loading_row.visible
+        assert window.advance.enabled and "values filled" in window.preprocess_step.status.text
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_preprocessing_discards_the_late_result_and_allows_retry(
+    window: WorkflowWindow, missing_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling restores the controls, and the abandoned worker cannot store or show anything when it finishes."""
+    gate = _Gate(monkeypatch)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        raw_rows = window.dataset_grid.rows
+        pending = await _start_apply(window, gate)
+        try:
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            async with asyncio.timeout(5):
+                while window.loading_row.visible:
+                    await asyncio.sleep(0.01)
+            assert window.preprocessed_data is None and window.wizard.enabled and window.preprocess_step.apply_button.enabled
+            assert window.preprocess_step.status.text == "" and window.dataset_grid.rows == raw_rows
+        finally:
+            gate.open()
+            assert await asyncio.to_thread(gate.finished.wait, 5)
+        await window.settle()
+        await asyncio.sleep(0.05)
+        assert window.preprocessed_data is None and window.model is None and window.preprocess_step.status.text == ""
+        assert window.dataset_grid.rows == raw_rows and window.preprocess_step.remaining_missing_values != (0, 0)
+        await _apply(window, NanStrategy.DELETE)
+        assert window.preprocessed_data is not None and len(window.dataset_grid.rows) == 7
+
+    asyncio.run(exercise())
+
+
+def test_reload_during_preprocessing_is_ignored_and_a_split_change_after_cancelling_discards_the_late_result(
+    window: WorkflowWindow, missing_path: Path, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reload while busy is refused; after cancelling, a new split or dataset is never overwritten by the abandoned worker."""
+    gate = _Gate(monkeypatch)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        original = window.train_data
+        pending = await _start_apply(window, gate)
+        try:
+            await window.show_dataset(dataset_path)
+            assert window.dataset_step.path_text.text == str(missing_path.resolve()) and window.train_data is original
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            async with asyncio.timeout(5):
+                while window.loading_row.visible:
+                    await asyncio.sleep(0.01)
+            await window.request_step(2)
+            window.split_step.share.value = 40
+            await window.settle()
+            assert window.train_data is None
+        finally:
+            gate.open()
+            assert await asyncio.to_thread(gate.finished.wait, 5)
+        await asyncio.sleep(0.05)
+        await window.settle()
+        assert window.preprocessed_data is None and window.train_data is None and window.model is None
+        assert not window.preprocess_step.has_missing_values and window.preprocess_step.status.text == ""
+
+        await window.show_dataset(dataset_path)
+        await asyncio.sleep(0.05)
+        assert window.preprocessed_data is None and window.selection is None and len(window.dataset) == 10
+
+    asyncio.run(exercise())
+
+
+def test_worker_error_restores_the_window_and_the_next_apply_works(
+    window: WorkflowWindow, missing_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure raised inside the worker shows its message, discards the previous result and leaves everything usable."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+    gate = _Gate(monkeypatch)
+    gate.open()
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        await _apply(window, NanStrategy.MEAN)
+        assert window.preprocessed_data is not None
+        raw_rows = window.dataset_grid.rows
+        gate.error = ValueError("Worker exploded.")
+        await _apply(window, NanStrategy.MEDIAN)
+        errors.assert_called_once_with("Worker exploded.", title=PREPROCESS_ERROR_TITLE)
+        assert window.preprocessed_data is None and window.model is None
+        assert window.wizard.enabled and not window.loading_row.visible and not window.advance.enabled
+        assert window.preprocess_step.status.text == "" and window.preprocess_step.remaining_missing_values != (0, 0)
+        assert window.dataset_grid.rows != [] and len(window.dataset_grid.rows) == len(raw_rows)
+        gate.error = None
+        await _apply(window, NanStrategy.MEDIAN)
+        assert errors.call_count == 1 and window.preprocessed_data is not None and window.advance.enabled
+
+    asyncio.run(exercise())
+
+
+# ----------------------------------------------------------------------------
+# Model worker
+# ----------------------------------------------------------------------------
+
+MODEL_DEFAULT_FORMULA = "Create the model to see its formula."
+
+
+async def _start_create(window: WorkflowWindow, gate: _Gate) -> asyncio.Task[None]:
+    pending = asyncio.create_task(window.model_step_on_create_model(UiEvent(source=window.model_step)))
+    assert await asyncio.to_thread(gate.started.wait, 5)
+    return pending
+
+
+async def _cancel(pending: asyncio.Task[None], window: WorkflowWindow) -> None:
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    async with asyncio.timeout(5):
+        while window.loading_row.visible:
+            await asyncio.sleep(0.01)
+
+
+def _assert_no_model(window: WorkflowWindow) -> None:
+    assert window.model is None and not window.fit_chart.point_series and not window.fit_chart.line_series and not window.fit_panel.visible
+    assert window.model_step.formula.text == MODEL_DEFAULT_FORMULA and not window.model_step.completed
+
+
+def test_training_shows_progress_locks_controls_stays_responsive_and_runs_once(
+    window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the model trains: loading row, disabled navigation and buttons, a moving spinner, and a single call."""
+    gate = _Gate(monkeypatch, "create_model")
+
+    async def exercise() -> None:
+        await _open_model_step(window, dataset_path, (0,))
+        pending = await _start_create(window, gate)
+        try:
+            assert window.loading_row.visible and window.loading_label.text == "Creating model…"
+            assert window.feedback.text == "Creating model…"
+            assert not window.wizard.enabled and not window.advance.enabled and not window.back.enabled
+            assert not window.dataset_step.open_dataset.enabled
+            phase = window.loading_spinner.phase
+            async with asyncio.timeout(5):
+                while window.loading_spinner.phase == phase:
+                    await asyncio.sleep(0.01)
+            window.preview_label.text = "The UI remains responsive"
+            assert window.preview_label.text == "The UI remains responsive"
+            button = window.model_step.create_button
+            for _ in range(3):
+                button.click.emit(ClickEvent(source=button))
+                await window.model_step_on_create_model(UiEvent(source=window.model_step))
+            assert len(gate.threads) == 1 and gate.threads[0] != window.ui_thread_id() and window.model is None
+        finally:
+            gate.open()
+            await pending
+        await window.settle()
+        assert len(gate.threads) == 1 and window.model is not None
+        assert window.wizard.enabled and not window.loading_row.visible and window.model_step.create_button.enabled
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_training_keeps_no_model_and_discards_the_late_result(
+    window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling restores the controls; the abandoned worker leaves the model, chart, panel and formula untouched."""
+    gate = _Gate(monkeypatch, "create_model")
+
+    async def exercise() -> None:
+        await _open_model_step(window, dataset_path, (0,))
+        pending = await _start_create(window, gate)
+        try:
+            await _cancel(pending, window)
+            assert window.wizard.enabled and window.advance.enabled is False and window.model_step.create_button.enabled
+            assert window.back.enabled and window.dataset_step.open_dataset.enabled
+            _assert_no_model(window)
+        finally:
+            gate.open()
+            assert await asyncio.to_thread(gate.finished.wait, 5)
+        await asyncio.sleep(0.05)
+        await window.settle()
+        _assert_no_model(window)
+        await window.create_model()
+        assert window.model is not None and window.fit_panel.visible
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_training_keeps_the_previous_model(window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cancelling a second training keeps the first model, its formula and its chart; the late result is dropped."""
+
+    async def exercise() -> None:
+        await _open_model_step(window, dataset_path, (0,))
+        await window.create_model()
+        previous, formula, series = window.model, window.model_step.formula.text, window.fit_chart.point_series
+        gate = _Gate(monkeypatch, "create_model")
+        pending = await _start_create(window, gate)
+        try:
+            await _cancel(pending, window)
+            assert window.model is previous and window.model_step.formula.text == formula
+            assert window.fit_chart.point_series is series and window.fit_panel.visible and window.model_step.completed
+        finally:
+            gate.open()
+            assert await asyncio.to_thread(gate.finished.wait, 5)
+        await asyncio.sleep(0.05)
+        await window.settle()
+        assert window.model is previous and window.fit_chart.point_series is series and window.model_step.formula.text == formula
+
+    asyncio.run(exercise())
+
+
+def test_reload_during_training_is_ignored(window: WorkflowWindow, dataset_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opening another dataset while the model trains does nothing; the model is created for the original data."""
+    other = tmp_path / "other.csv"
+    DataFrame({"a": range(10), "b": range(10), "c": range(10)}).to_csv(other, index=False)
+    gate = _Gate(monkeypatch, "create_model")
+
+    async def exercise() -> None:
+        await _open_model_step(window, dataset_path, (0,))
+        pending = await _start_create(window, gate)
+        try:
+            await window.show_dataset(other)
+            assert window.dataset_step.path_text.text == str(dataset_path.resolve()) and window.selection is not None
+            assert window.loading_label.text == "Creating model…"
+        finally:
+            gate.open()
+            await pending
+        assert window.model is not None and window.model.inputs == ("area",) and window.selection == (["area"], "energy")
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("change", ["columns", "split", "preprocessing"])
+def test_changes_after_cancelling_training_are_not_overwritten_by_the_late_result(
+    window: WorkflowWindow, missing_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Editing the columns, the split or the treatment after cancelling leaves no model when the abandoned worker ends."""
+    gate = _Gate(monkeypatch, "create_model")
+
+    async def exercise() -> None:
+        await _confirmed_split(window, missing_path)
+        await _apply(window, NanStrategy.MEAN)
+        await window.press_continue()
+        assert window.wizard.selected_index == 4
+        pending = await _start_create(window, gate)
+        try:
+            await _cancel(pending, window)
+            if change == "columns":
+                await window.request_step(1)
+                await window.choose_columns((0,), output=1)
+                assert window.selection is None
+            elif change == "split":
+                await window.request_step(2)
+                window.split_step.share.value = 40
+                await window.settle()
+                assert window.train_data is None
+            else:
+                await window.request_step(3)
+                window.preprocess_step.strategy.selected_index = list(STRATEGY_LABELS).index(NanStrategy.MEDIAN)
+                await window.settle()
+                assert window.preprocessed_data is None
+        finally:
+            gate.open()
+            assert await asyncio.to_thread(gate.finished.wait, 5)
+        await asyncio.sleep(0.05)
+        await window.settle()
+        _assert_no_model(window)
+
+    asyncio.run(exercise())
+
+
+def test_worker_error_during_training_shows_the_dialog_and_allows_a_retry(
+    window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An error raised inside the blocked worker is reported, the controls come back and the next attempt succeeds."""
+    errors = Mock()
+    monkeypatch.setattr(ErrorDialog, "show_error", errors)
+    gate = _Gate(monkeypatch, "create_model")
+    gate.error = ValueError("Singular matrix in worker.")
+
+    async def exercise() -> None:
+        await _open_model_step(window, dataset_path, (0,))
+        pending = await _start_create(window, gate)
+        try:
+            assert not window.wizard.enabled and window.loading_row.visible
+        finally:
+            gate.open()
+            await pending
+        await window.settle()
+        errors.assert_called_once_with("Singular matrix in worker.", title=MODEL_ERROR_TITLE)
+        assert window.wizard.enabled and not window.loading_row.visible and window.model_step.create_button.enabled
+        _assert_no_model(window)
+        gate.error = None
+        await window.create_model()
+        assert errors.call_count == 1 and window.model is not None and window.model_step.completed
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="DatasetWindow._refresh does not disable the Create model button while the model trains; only its handler ignores clicks.",
+)
+def test_create_model_button_is_disabled_while_training(window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The button must look disabled, not just ignore clicks, for as long as the worker runs."""
+    gate = _Gate(monkeypatch, "create_model")
+
+    async def exercise() -> None:
+        await _open_model_step(window, dataset_path, (0,))
+        pending = await _start_create(window, gate)
+        try:
+            assert not window.model_step.create_button.enabled
+        finally:
+            gate.open()
+            await pending
+        assert window.model_step.create_button.enabled
 
     asyncio.run(exercise())

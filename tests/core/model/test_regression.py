@@ -279,3 +279,147 @@ def test_multiple_fit_plot_compares_actual_and_predicted_values(plane_train: Dat
     values = np.concatenate([plane_train.y, plane_test.y, model.predict(plane_train), model.predict(plane_test)])
     (start_x, start_y), (end_x, end_y) = plot.line
     assert (start_x, start_y, end_x, end_y) == pytest.approx((values.min(), values.min(), values.max(), values.max()))
+
+
+# ----------------------------------------------------------------------------
+# Noisy data checked against independent calculations
+# ----------------------------------------------------------------------------
+
+
+def _noisy(rows: int, seed: int, columns: int = 2) -> DataFrame:
+    """Rows around y = 4 + 1.5a - 2b (+ 0.5c) with Gaussian noise, so no fit is exact."""
+    rng = np.random.default_rng(seed)
+    data = {name: rng.uniform(-5, 5, rows) for name in "abc"[:columns]}
+    y = 4 + 1.5 * data["a"] - 2 * data["b"] + (0.5 * data["c"] if columns > 2 else 0) + rng.normal(0, 1.5, rows)
+    return DataFrame({**data, "y": y})
+
+
+def _independent_metrics(actual: np.ndarray, predicted: np.ndarray) -> tuple[float, float]:
+    """R² and MSE from their definitions."""
+    residual = float(((actual - predicted) ** 2).sum())
+    return 1 - residual / float(((actual - actual.mean()) ** 2).sum()), residual / len(actual)
+
+
+def test_simple_regression_matches_polyfit_on_noisy_data() -> None:
+    """Slope and intercept equal the least-squares line computed by NumPy."""
+    train, test = _noisy(40, 1), _noisy(10, 2)
+    model = create_model(train, test, ["a"], "y")
+    slope, intercept = np.polyfit(train["a"], train["y"], 1)
+    assert model.coefficients == pytest.approx((slope,))
+    assert model.intercept == pytest.approx(intercept)
+
+
+@pytest.mark.parametrize("inputs", [["a", "b"], ["a", "b", "c"]])
+def test_multiple_regression_matches_lstsq_on_noisy_data(inputs: list[str]) -> None:
+    """Coefficients and intercept equal the NumPy least-squares solution."""
+    train, test = _noisy(50, 3, 3), _noisy(10, 4, 3)
+    model = create_model(train, test, inputs, "y")
+    design = np.column_stack([train[inputs].to_numpy(), np.ones(len(train))])
+    solution, *_ = np.linalg.lstsq(design, train["y"].to_numpy(), rcond=None)
+    assert model.coefficients == pytest.approx(tuple(solution[:-1]))
+    assert model.intercept == pytest.approx(solution[-1])
+
+
+def test_metrics_match_an_independent_calculation_and_differ_between_subsets() -> None:
+    """Training and test metrics follow their own subset, are not swapped, and report their row counts."""
+    train, test = _noisy(40, 5), _noisy(7, 6)
+    model = create_model(train, test, ["a", "b"], "y")
+    design = np.column_stack([train[["a", "b"]].to_numpy(), np.ones(len(train))])
+    beta, *_ = np.linalg.lstsq(design, train["y"].to_numpy(), rcond=None)
+
+    def predict(frame: DataFrame) -> np.ndarray:
+        return np.column_stack([frame[["a", "b"]].to_numpy(), np.ones(len(frame))]) @ beta
+
+    train_r2, train_mse = _independent_metrics(train["y"].to_numpy(), predict(train))
+    test_r2, test_mse = _independent_metrics(test["y"].to_numpy(), predict(test))
+    assert (model.train_metrics.r2, model.train_metrics.mse) == pytest.approx((train_r2, train_mse))
+    assert (model.test_metrics.r2, model.test_metrics.mse) == pytest.approx((test_r2, test_mse))
+    assert model.train_metrics.mse != pytest.approx(model.test_metrics.mse)
+    assert model.train_metrics.r2 != pytest.approx(model.test_metrics.r2)
+    assert (model.train_metrics.rows, model.test_metrics.rows) == (len(train), len(test))
+
+
+def test_changing_the_test_rows_never_changes_the_coefficients() -> None:
+    """Only the training subset takes part in the fit; the test metrics do change."""
+    train = _noisy(30, 7)
+    first = create_model(train, _noisy(8, 8), ["a", "b"], "y")
+    second = create_model(train, _noisy(12, 9).assign(y=lambda frame: frame.y * 10 + 100), ["a", "b"], "y")
+    assert second.coefficients == first.coefficients and second.intercept == first.intercept
+    assert second.train_metrics == first.train_metrics and second.test_metrics != first.test_metrics
+
+
+def test_text_input_and_output_name_the_column(plane_train: DataFrame, plane_test: DataFrame) -> None:
+    """A text column is rejected as X or as Y with its name in the message."""
+    with pytest.raises(ValueError, match="'note' is not numeric"):
+        create_model(plane_train, plane_test, ["a", "note"], "y")
+    with pytest.raises(ValueError, match="'note' is not numeric"):
+        create_model(plane_train, plane_test, ["a"], "note")
+
+
+def test_missing_values_arriving_unprocessed_give_a_clear_error(plane_train: DataFrame, plane_test: DataFrame) -> None:
+    """Gaps in X, in Y and in either subset raise a message naming the column, never a NumPy error."""
+    with_gap = plane_train.copy()
+    with_gap.loc[2, "a"] = NAN
+    with pytest.raises(ValueError, match="'a' has 1 missing value in the training subset"):
+        create_model(with_gap, plane_test, ["a", "b"], "y")
+    with_gap = plane_test.copy()
+    with_gap.loc[0, "y"] = NAN
+    with pytest.raises(ValueError, match="'y' has 1 missing value in the test subset"):
+        create_model(plane_train, with_gap, ["a", "b"], "y")
+
+
+def test_constant_input_gets_a_zero_coefficient_and_the_mean_as_intercept() -> None:
+    """A constant X carries no information: the coefficient is 0 and the intercept is the mean of Y."""
+    train = DataFrame({"x": [3.0] * 4, "y": [1.0, 2.0, 3.0, 6.0]})
+    model = create_model(train, DataFrame({"x": [3.0, 3.0], "y": [2.0, 4.0]}), ["x"], "y")
+    assert model.coefficients == pytest.approx((0.0,), abs=1e-9)
+    assert model.intercept == pytest.approx(3.0)
+    assert model.train_metrics.r2 == pytest.approx(0.0, abs=1e-9)
+
+
+def test_collinear_inputs_still_fit_and_predict() -> None:
+    """With x2 = 2 * x1 the split of the weight is arbitrary, but predictions and metrics stay exact."""
+    x = [0.0, 1.0, 2.0, 3.0, 4.0]
+    train = DataFrame({"area": x, "double": [2 * v for v in x], "y": [3 * v + 1 for v in x]})
+    test = DataFrame({"area": [5.0, 6.0], "double": [10.0, 12.0], "y": [16.0, 19.0]})
+    model = create_model(train, test, ["area", "double"], "y")
+    assert model.coefficients[0] + 2 * model.coefficients[1] == pytest.approx(3.0)
+    assert model.intercept == pytest.approx(1.0)
+    assert model.train_metrics.r2 == pytest.approx(1.0) and model.test_metrics.mse == pytest.approx(0.0, abs=1e-12)
+    assert model.predict(DataFrame({"area": [10.0], "double": [20.0]})) == pytest.approx([31.0])
+
+
+def test_more_inputs_than_training_rows_still_fits_the_training_data() -> None:
+    """An underdetermined fit is accepted and reproduces the training rows."""
+    train = _noisy(3, 10, 3)
+    model = create_model(train, _noisy(4, 11, 3), ["a", "b", "c"], "y")
+    assert model.train_metrics.mse == pytest.approx(0.0, abs=1e-12) and model.train_metrics.rows == 3
+    assert all(math.isfinite(value) for value in (*model.coefficients, model.intercept, model.test_metrics.mse))
+
+
+def test_a_single_training_row_is_rejected_even_with_a_large_test_share() -> None:
+    """A 0.9 split of two rows leaves one training row, which cannot fit a line."""
+    with pytest.raises(ValueError, match="At least two training rows"):
+        create_model(_noisy(1, 12), _noisy(9, 13), ["a"], "y")
+
+
+def test_constant_test_output_has_no_uncontrolled_r2() -> None:
+    """When every test Y is equal the R² denominator is 0: no warnings or exceptions, a controlled value, and the MSE stays exact."""
+    train = _line([0, 1, 2, 3])
+    test = DataFrame({"x": [4.0, 5.0, 6.0], "y": [7.0, 7.0, 7.0]})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        model = create_model(train, test, ["x"], "y")
+    assert model.test_metrics.mse == pytest.approx(((9 - 7) ** 2 + (11 - 7) ** 2 + (13 - 7) ** 2) / 3)
+    # scikit-learn's convention for a zero denominator is 0.0 (1.0 for a perfect fit): finite, never NaN or inf.
+    assert model.test_metrics.r2 == 0.0
+    assert format_metric(model.test_metrics.r2) == "0.0000"
+
+
+def test_inputs_are_not_modified_with_noisy_data() -> None:
+    """Training and plotting leave both subsets untouched."""
+    train, test = _noisy(20, 14), _noisy(5, 15)
+    before = train.copy(), test.copy()
+    fit_plot(create_model(train, test, ["a", "b"], "y"), train, test)
+    pd.testing.assert_frame_equal(train, before[0])
+    pd.testing.assert_frame_equal(test, before[1])
