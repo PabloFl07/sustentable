@@ -17,4 +17,5 @@ wheels/
 data/
 .historias/
 work/
-examples/model_saving/model
+examples/model_saving/models
+models/

@@ -11,6 +11,9 @@ Generated files:
 import json
 import platform
 from pathlib import Path
+from examples.linear_regression import train_model, DATA_FILE, EXPERIMENTS, data_preparation, model_formula, evaluate_model, TARGET_COLUMN
+from sustentable.core.io.readers import get_reader
+from pandas import DataFrame
 
 import numpy as np
 import onnx
@@ -33,43 +36,23 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 ONNX_PATH = OUTPUT_DIR / "model.onnx"
 JSON_PATH = OUTPUT_DIR / "model_metadata.json"
 
-INPUT_COLUMNS = ["temperatura", "humedad"]
-OUTPUT_COLUMNS = ["consumo"]
+data = get_reader(DATA_FILE).read()
+
+for new_values in EXPERIMENTS:
+
+    features = list(new_values)
+    INPUT_COLUMNS = features
+
+    X_train, X_test, y_train, y_test = data_preparation(data, features)
+
+    model = train_model(X_train, y_train)
+
+    evaluate_model(model, X_train, y_train, "train")
+    evaluate_model(model, X_test, y_test, "test")
+
+    new_input = DataFrame([new_values])
 
 
-# --------------------------------------------------
-# 2. Generate example dataset
-# --------------------------------------------------
-
-# Reproducible synthetic dataset
-rng = np.random.default_rng(42)
-
-X = rng.uniform(10, 40, size=(200, 2))
-
-# Linear relationship:
-# consumo = 2.5 * temperatura + 1.8 * humedad + 0.7
-y = (
-    2.5 * X[:, 0]
-    + 1.8 * X[:, 1]
-    + 0.7
-    + rng.normal(0, 2, size=200)
-)
-
-# Split into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    random_state=42
-)
-
-
-# --------------------------------------------------
-# 3. Train Scikit-learn model
-# --------------------------------------------------
-
-model = LinearRegression()
-model.fit(X_train, y_train)
 
 # Predictions
 y_train_pred = model.predict(X_train)
@@ -102,6 +85,10 @@ onnx_model = convert_sklearn(
     initial_types=initial_types
 )
 
+print("\nONNX input:")
+for input_info in onnx_model.graph.input:
+    print(input_info.name, input_info.type)
+
 # Validate ONNX model
 onnx.checker.check_model(onnx_model)
 
@@ -117,12 +104,7 @@ print(f"ONNX model saved: {ONNX_PATH}")
 # --------------------------------------------------
 
 # Build formula from trained coefficients
-formula = (
-    f"consumo = "
-    f"{model.coef_[0]:.6f} * temperatura + "
-    f"{model.coef_[1]:.6f} * humedad + "
-    f"{model.intercept_:.6f}"
-)
+formula = (model_formula(model))
 
 metadata = {
     "name": "Linear Regression - Energy Consumption",
@@ -134,7 +116,7 @@ metadata = {
     "formula": formula,
 
     "input_columns": INPUT_COLUMNS,
-    "output_columns": OUTPUT_COLUMNS,
+    "output_columns": TARGET_COLUMN,
 
     "parameters": {
         "coefficients": model.coef_.tolist(),
@@ -212,25 +194,32 @@ print(loaded_metadata["output_columns"])
 # 8. Make predictions using ONNX Runtime
 # --------------------------------------------------
 
-# ONNX expects float32 input
-X_test_onnx = X_test.astype(np.float32)
+X_test_onnx = np.asarray(X_test, dtype=np.float32)
 
+# Inspect expected input
+input_info = session.get_inputs()[0]
+
+print("\nONNX input information:")
+print("Name:", input_info.name)
+print("Type:", input_info.type)
+print("Shape:", input_info.shape)
+
+# Run inference
 onnx_predictions = session.run(
-    [output_name],
-    {input_name: X_test_onnx}
+    None,
+    {input_info.name: X_test_onnx}
 )[0].reshape(-1)
 
-# Compare with original Scikit-learn predictions
+# Compare with Scikit-learn
 sklearn_predictions = model.predict(X_test)
 
 print("\nPrediction comparison:")
-for i in range(5):
+for i in range(min(5, len(sklearn_predictions))):
     print(
         f"Scikit-learn: {sklearn_predictions[i]:.4f} | "
         f"ONNX: {onnx_predictions[i]:.4f}"
     )
 
-# Verify that both implementations produce equivalent results
 np.testing.assert_allclose(
     sklearn_predictions,
     onnx_predictions,
