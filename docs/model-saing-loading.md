@@ -1,12 +1,6 @@
-Claro. Aquí tienes el documento completo en inglés, en Markdown puro, listo para copiar y guardar como `model_persistence_comparison.md`.
-
-markdown
-
-````markdown
-
 # Comparison of Model Persistence Formats: ONNX, Joblib, and JSON
 
-This document compares ONNX, Joblib, and JSON as methods for saving and loading machine learning models in the Sustentable project. The comparison evaluates ease of use, file size and readability, security, compatibility across Python and library versions, and the ability to store metadata required by the application.
+This note compares ONNX, Joblib, and JSON as methods for saving and loading machine learning models. The comparison evaluates ease of use, file size and readability, security, compatibility across Python and library versions, and the ability to store metadata required by the application.
 
 The comparison focuses primarily on models trained with Python and scikit-learn. It also considers that the three formats do not serve exactly the same purpose: Joblib serializes Python objects, ONNX represents models for execution through a compatible runtime, and JSON stores structured data but does not directly serialize a scikit-learn model.
 
@@ -42,24 +36,7 @@ Reference: [Joblib: Persistence](https://joblib.readthedocs.io/en/latest/persist
 ### Proof of concept: code execution when loading a Pickle file
 
 The following harmless example demonstrates this behavior. An object is created whose reconstruction executes `print()`. There is no need to explicitly call this method: the instruction runs when the file is loaded.
-
-```python
-import pickle
-
-class TestObject:
-    def __reduce__(self):
-        return (print, ("Code executed during loading!",))
-
-# Save the object
-obj = TestObject()
-
-with open("test.pkl", "wb") as file:
-    pickle.dump(obj, file)
-
-# Load the object
-with open("test.pkl", "rb") as file:
-    loaded_obj = pickle.load(file)
-```
+The function `test_pickle()` on `example/model_saving/loading_security.py` shows an example.
 
 **Expected console output:**
 
@@ -71,22 +48,7 @@ Calling `pickle.load()` causes `print()` to execute as part of the object recons
 
 ### Checking the same risk with Joblib
 
-Since Joblib uses the `pickle` protocol internally, the same test can be performed:
-
-```python
-import joblib
-
-class TestObject:
-    def __reduce__(self):
-        return (print, ("Code executed during loading with Joblib!",))
-
-# Save the object
-obj = TestObject()
-joblib.dump(obj, "test.joblib")
-
-# Load the object
-loaded_obj = joblib.load("test.joblib")
-```
+Since Joblib uses the `pickle` protocol internally, the same test can be performed. See `test_joblib()` on `example/model_saving/loading_security.py`.
 
 **Expected output:**
 
@@ -139,35 +101,7 @@ References:
 
 ### Joblib
 
-Joblib allows a dictionary containing the model and all additional information to be stored:
-
-```python
-import joblib
-
-data = {
-    "model": model,
-    "formula": "y = a*x + b",
-    "input_columns": ["temperature", "humidity"],
-    "output_columns": ["consumption"],
-    "metrics": {
-        "train": {"r2": 0.95},
-        "test": {"r2": 0.91}
-    },
-    "description": "Energy consumption prediction model."
-}
-
-joblib.dump(data, "model.joblib")
-```
-
-Loading the information is straightforward:
-
-```python
-data = joblib.load("model.joblib")
-
-model = data["model"]
-formula = data["formula"]
-metrics = data["metrics"]
-```
+Joblib allows a dictionary containing the model and all additional information to be stored. See the example on `example/model_saving/metadata_storage.py`
 
 Its main advantage is that it preserves the original object and allows all information to be stored in a single file. Its main disadvantages are security risks and dependencies on Python and library versions.
 
@@ -179,54 +113,17 @@ Reference: [Scikit-learn: Model Persistence](https://scikit-learn.org/stable/mod
 
 JSON is suitable for storing model parameters and metadata, but it cannot directly serialize a scikit-learn estimator.
 
-For example, the coefficients of a linear regression model could be stored as follows:
+For example, the coefficients of a linear regression model could be stored as the example on `example/model_saving/metadata_storage.py`
 
-```python
-import json
+To use the model, it must be reconstructed (example on the same script).
 
-data = {
-    "type": "LinearRegression",
-    "coefficients": [2.5, 1.8],
-    "intercept": 0.7,
-    "formula": "y = 2.5*x1 + 1.8*x2 + 0.7",
-    "input_columns": ["temperature", "humidity"],
-    "output_columns": ["consumption"],
-    "metrics": {
-        "train": {"r2": 0.95},
-        "test": {"r2": 0.91}
-    },
-    "description": "Energy consumption prediction model."
-}
-
-with open("model.json", "w", encoding="utf-8") as file:
-    json.dump(data, file, indent=4, ensure_ascii=False)
-```
-
-To use the model, it must be reconstructed:
-
-```python
-import json
-import numpy as np
-from sklearn.linear_model import LinearRegression
-
-with open("model.json", encoding="utf-8") as file:
-    data = json.load(file)
-
-model = LinearRegression()
-
-model.coef_ = np.array(data["coefficients"])
-model.intercept_ = data["intercept"]
-model.n_features_in_ = len(data["coefficients"])
-model.feature_names_in_ = np.array(data["input_columns"])
-```
-
-This example reconstructs the parameters of a simple linear regression model. It is not a general solution for every model type: each estimator requires its attributes to be saved and restored correctly. There may also be dependencies on transformations, preprocessors, and other pipeline components.
+The example reconstructs the parameters of a simple linear regression model. It is not a general solution for every model type: each estimator requires its attributes to be saved and restored correctly. There may also be dependencies on transformations, preprocessors, and other pipeline components.
 
 JSON's main advantage is that its data is readable, independent of Python, and easy to validate. Its main disadvantage is that model reconstruction must be implemented and maintained in the application code.
 
 ## Decision
 
-For the Sustentable project, the recommendation is to use **ONNX to store and execute the model, accompanied by a JSON file to store its metadata**.
+For the project, we will be using **ONNX to store and execute the model, accompanied by a JSON file to store its metadata**.
 
 This combination provides a good balance between security, compatibility, and maintainability.
 
@@ -236,7 +133,7 @@ The reasons are:
 2. **Compatibility:** ONNX allows models to run without depending on the original Python or scikit-learn versions. JSON allows metadata to be retrieved across different programming languages.
 3. **Maintainability:** JSON makes it easy to inspect and modify model information without loading the model itself.
 4. **Portability:** ONNX allows models to be deployed in environments different from the one in which they were trained.
-5. **Additional information:** JSON makes it straightforward to store formulas, columns, metrics, and descriptions required by Sustentable.
+5. **Additional information:** JSON makes it straightforward to store formulas, columns, metrics, and descriptions required by.
 
 Joblib remains a valid alternative during development and for storing models that are only loaded from controlled and trusted sources. However, it is not recommended as the primary format for distributing models.
 
@@ -311,7 +208,6 @@ Official documentation consulted:
 
 ## Conclusion
 
-ONNX is the best option among the three formats for distributing and executing Sustentable models, while JSON is particularly useful for storing the additional information required by the application.
+ONNX is the best option among the three formats for distributing and executing models, while JSON is particularly useful for storing the additional information required by the application.
 
 Joblib stands out for its ease of use, but its security risks and compatibility limitations make it less suitable for model distribution.
-````
