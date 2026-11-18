@@ -1,4 +1,4 @@
-"""Guided dataset workflow with modular forms and one persistent data preview."""
+"""Start screen and guided dataset workflow with modular forms and one persistent data preview."""
 
 import asyncio
 from collections.abc import AsyncIterator, Hashable
@@ -26,11 +26,13 @@ from sustentable.core.io.exceptions import DataImportError
 from sustentable.core.io.readers import SUPPORTED_EXTENSIONS, get_reader
 from sustentable.core.model.regression import FitPlot, RegressionModel, create_model, fit_plot
 from sustentable.core.processing.data_processing import process_nan_values
+from sustentable.gui.controls.action_tile import with_action_tile
 from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.scatter_chart import LineSeries, PointSeries, ScatterChart
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
+from sustentable.gui.start_screen import StartScreen
 from sustentable.gui.steps.columns_step import ColumnsStep
 from sustentable.gui.steps.dataset_step import DatasetStep
 from sustentable.gui.steps.model_step import ModelStep
@@ -39,6 +41,7 @@ from sustentable.gui.steps.split_step import SplitStep
 
 OPEN_ERROR_TITLE = "Unable to open dataset"
 MODEL_ERROR_TITLE = "Unable to create model"
+MODEL_LOADING_UNAVAILABLE = "Loading a saved model is not available yet. Load a dataset to create a new model."
 # Fixed colors keep both subsets recognizable in any theme; translucent markers show where points overlap.
 TRAIN_COLOR = "#60a5facc"
 TEST_COLOR = "#fb923ccc"
@@ -47,6 +50,9 @@ LINE_COLOR = "#34d399"
 
 class DatasetWindow(App):
     """Load data, confirm regression columns and retain the confirmed train/test subsets and model.
+
+    The window opens on a start screen that offers to load a saved model or a dataset; the first dataset that
+    loads replaces it with the workflow.
 
     ``dataset`` is the last successfully loaded frame. ``selection``, ``train_data`` and ``test_data``
     hold confirmed results, or ``None`` when a prerequisite has changed. ``preprocessed_data`` holds the
@@ -64,15 +70,16 @@ class DatasetWindow(App):
     model: RegressionModel | None
 
     def build(self) -> None:
-        """Place compact horizontal steps above the shared table and a stable navigation footer."""
+        """Place the start screen, and the compact horizontal steps above the shared table and a stable navigation footer."""
         self.title, self.width, self.height = "Sustentable", 1280, 720
         self.layout, self.padding, self.spacing = "stack", 16, 12
-        self.theme = with_sidebar_button(self.theme)
+        self.theme = with_action_tile(with_sidebar_button(self.theme))
         self.dataset = self.selection = self.train_data = self.test_data = self.preprocessed_data = self.model = None
         self._busy_message = ""
         self._dataset_name = ""
         self._dataset_caption = "Dataset preview"
         self._showing_processed = False
+        self.start_screen = StartScreen(parent=self, tokens=self.theme.tokens, flex=1)
         self.wizard = Stepper(parent=self, orientation="horizontal", linear=True, header_height=48)
         self.dataset_step = DatasetStep(parent=self.wizard)
         self.columns_step = ColumnsStep(parent=self.wizard, tokens=self.theme.tokens)
@@ -89,9 +96,9 @@ class DatasetWindow(App):
         self.fit_panel = Container(parent=self, layout="stack", flex=1, spacing=8, visible=False)
         self.fit_label = Label(parent=self.fit_panel, height=24)
         self.fit_chart = ScatterChart(parent=self.fit_panel, flex=1)
-        footer = Container(parent=self, layout="dock", height=36, spacing=8)
-        self.advance = Button(parent=footer, text="Continue", dock="right", width=176)
-        self.back = SidebarButton(parent=footer, text="Back", dock="right", width=80)
+        self.footer = Container(parent=self, layout="dock", height=36, spacing=8)
+        self.advance = Button(parent=self.footer, text="Continue", dock="right", width=176)
+        self.back = SidebarButton(parent=self.footer, text="Back", dock="right", width=80)
         self.feedback = Label(parent=self, height=24)
         self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
         self._refresh()
@@ -212,7 +219,7 @@ class DatasetWindow(App):
         self.wizard.next()
 
     def _refresh(self) -> None:
-        self.wizard.enabled = self.dataset_step.open_dataset.enabled = not self._busy_message
+        self.wizard.enabled = self.dataset_step.open_dataset.enabled = self.start_screen.enabled = not self._busy_message
         self.back.enabled = not self._busy_message and self.wizard.selected_index > 0
         self.advance.text = "Continue"
         self.feedback.text = "Not implemented yet."
@@ -246,8 +253,10 @@ class DatasetWindow(App):
             self.feedback.text = self._busy_message
         self.advance.enabled = not self._busy_message and not problem and self.wizard.selected_index < len(self.wizard.steps) - 1
         self.model_step.set_prerequisite(self._model_prerequisite())
-        showing_fit = self.model is not None and self.wizard.selected_step is self.model_step
-        self.preview.visible, self.fit_panel.visible = not showing_fit, showing_fit
+        working = not self.start_screen.visible
+        self.wizard.visible = self.footer.visible = self.feedback.visible = working
+        showing_fit = working and self.model is not None and self.wizard.selected_step is self.model_step
+        self.preview.visible, self.fit_panel.visible = working and not showing_fit, showing_fit
 
     def _preprocess_problem(self) -> str:
         """Block the model while the selected columns still contain missing values."""
@@ -292,8 +301,21 @@ class DatasetWindow(App):
         self.model_step.clear_model()
         self.fit_chart.clear()
 
+    async def start_screen_on_load_model(self, event: UiEvent) -> None:
+        """Explain on the start screen that saved models cannot be loaded yet, without opening a dialog."""
+        if not self._busy_message:
+            self.start_screen.notice.text = MODEL_LOADING_UNAVAILABLE
+
+    async def start_screen_on_load_dataset(self, event: UiEvent) -> None:
+        """Choose a dataset to create a new model; the start screen stays when the dialog is cancelled or the load fails."""
+        await self._browse_dataset()
+
     async def dataset_step_on_browse(self, event: UiEvent) -> None:
         """Choose a file, preserving the workflow when the dialog is cancelled or fails."""
+        await self._browse_dataset()
+
+    async def _browse_dataset(self) -> None:
+        """Open the dataset dialog and load the chosen file; cancelling or a dialog error changes nothing."""
         if self._busy_message:
             return
         try:
@@ -307,9 +329,10 @@ class DatasetWindow(App):
             await self.show_dataset(chosen)
 
     async def show_dataset(self, path: str | Path) -> None:
-        """Read and convert off the UI thread; retain the previous workflow if either stage fails.
+        """Read and convert off the UI thread; retain the previous workflow, or the start screen, if either stage fails.
 
-        Overlapping requests are ignored. Cancelling the wait discards the worker's eventual result.
+        A successful load leaves the start screen for the workflow. Overlapping requests are ignored.
+        Cancelling the wait discards the worker's eventual result.
         """
         if self._busy_message:
             return
@@ -326,6 +349,7 @@ class DatasetWindow(App):
                 self._dataset_caption = f"{self._dataset_name} · {len(frame):,} rows · {len(frame.columns):,} columns"
                 self.preview_label.text = self._dataset_caption
                 self.wizard.reset()
+                self.start_screen.visible = False
             except (DataImportError, OSError, TypeError, ValueError) as error:
                 self.error_dialog.show_error(str(error), title=OPEN_ERROR_TITLE)
 
