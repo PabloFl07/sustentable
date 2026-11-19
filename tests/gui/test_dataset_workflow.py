@@ -1,6 +1,7 @@
 """Exercise real stepper events and confirmed data without requiring a display server."""
 
 import asyncio
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from threading import Event as ThreadEvent
@@ -12,10 +13,12 @@ from pandas import DataFrame
 from pysual import ClickEvent
 from pysual.events import Dispatcher
 
+from sustentable.core.io.export_model import ModelExportError
 from sustentable.core.processing.data_processing import NanStrategy, detect_nan_values, has_nan_values
 from sustentable.gui import dataset_window
+from sustentable.gui.controls.confirm_dialog import ConfirmDialog
 from sustentable.gui.controls.error_dialog import ErrorDialog
-from sustentable.gui.dataset_window import MODEL_ERROR_TITLE, DatasetWindow
+from sustentable.gui.dataset_window import MODEL_ERROR_TITLE, SAVE_ERROR_TITLE, SAVED_TITLE, DatasetWindow
 from sustentable.gui.steps import split_step
 from sustentable.gui.steps.preprocess_step import STRATEGY_LABELS
 
@@ -711,5 +714,188 @@ def test_model_errors_are_reported_and_the_window_keeps_working(
         assert window.model is previous and window.fit_chart.point_series is points and window.fit_panel.visible
         assert window.model_step.formula.text == previous.formula
         assert window.wizard.enabled and window.model_step.create_button.enabled
+
+    asyncio.run(exercise())
+
+
+# ----------------------------------------------------------------------------
+# Saving the model
+# ----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dialogs(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock, AsyncMock]:
+    """Replace the error, notice and confirmation dialogs; every confirmation is accepted unless a test changes it."""
+    errors, notices, confirm = Mock(), Mock(), AsyncMock(return_value=True)
+
+    def show(dialog: ErrorDialog, *args: object, **kwargs: object) -> None:
+        (notices if kwargs.get("title") == SAVED_TITLE else errors)(*args, **kwargs)
+
+    monkeypatch.setattr(ErrorDialog, "show_error", show)
+    monkeypatch.setattr(ConfirmDialog, "ask", confirm)
+    return errors, notices, confirm
+
+
+async def _save(window: WorkflowWindow) -> None:
+    button = window.model_step.save_button
+    button.click.emit(ClickEvent(source=button))
+    await window.settle()
+
+
+def test_save_button_is_only_enabled_while_a_model_is_shown(window: WorkflowWindow, model_path: Path) -> None:
+    """There is nothing to save before the model is created or after its data changes."""
+
+    async def exercise() -> None:
+        button = window.model_step.save_button
+        assert not button.enabled
+        await _open_model_step(window, model_path, (0,))
+        assert not button.enabled
+        await window.create_model()
+        assert button.enabled
+        await window.request_step(2)
+        window.split_step.share.value = 30
+        await window.settle()
+        assert not button.enabled
+
+    asyncio.run(exercise())
+
+
+def test_saving_writes_the_model_and_reports_its_path(
+    window: WorkflowWindow, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
+) -> None:
+    """The dialog proposes the ONNX extension, the model is saved in a worker and the path is shown."""
+    errors, notices, confirm = dialogs
+    folder = tmp_path / "Modelos de energía ñ"
+    folder.mkdir()
+    chooser = AsyncMock(return_value=str(folder / "consumo"))
+    monkeypatch.setattr(DatasetWindow, "choose_path", chooser)
+    threads = []
+    export = dataset_window.export_model
+
+    def observe(*args: object) -> object:
+        threads.append(get_ident())
+        return export(*args)
+
+    monkeypatch.setattr(dataset_window, "export_model", observe)
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0, 1))
+        await window.create_model()
+        window.model_step.description.text = "  Predice la energía.  "
+        await _save(window)
+        chooser.assert_awaited_once_with(save=True, title="Save model", suggested_name="energy_model.onnx", extensions=(".onnx",))
+        confirm.assert_not_awaited()
+        errors.assert_not_called()
+        assert threads and threads[0] != window.ui_thread_id()
+        model_file, metadata_file = folder / "consumo.onnx", folder / "consumo_metadata.json"
+        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+        assert model_file.is_file()
+        assert metadata["description"] == "Predice la energía."
+        assert metadata["input_columns"] == ["area", "occupants"] and metadata["output_columns"] == ["energy"]
+        notices.assert_called_once()
+        assert str(model_file) in notices.call_args.args[0] and str(metadata_file) in notices.call_args.args[0]
+        assert window.model_step.status.text == f"Model saved to {model_file}"
+        assert window.wizard.enabled and window.model_step.save_button.enabled
+
+    asyncio.run(exercise())
+
+
+def test_empty_description_warns_but_does_not_prevent_saving(
+    window: WorkflowWindow, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
+) -> None:
+    """Without a description the user is warned first, and can still save or go back to write one."""
+    _, notices, confirm = dialogs
+    chooser = AsyncMock(return_value=str(tmp_path / "modelo.onnx"))
+    monkeypatch.setattr(DatasetWindow, "choose_path", chooser)
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0,))
+        await window.create_model()
+        confirm.return_value = False
+        await _save(window)
+        confirm.assert_awaited_once()
+        assert "no description" in confirm.call_args.args[0]
+        chooser.assert_not_awaited()
+        confirm.return_value = True
+        await _save(window)
+        assert json.loads((tmp_path / "modelo_metadata.json").read_text(encoding="utf-8"))["description"] == ""
+        notices.assert_called_once()
+
+    asyncio.run(exercise())
+
+
+def test_cancelling_the_dialog_saves_nothing_and_shows_no_error(
+    window: WorkflowWindow, model_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
+) -> None:
+    """Closing the save dialog without choosing a file is not an error."""
+    errors, notices, _ = dialogs
+    monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=None))
+    export = Mock()
+    monkeypatch.setattr(dataset_window, "export_model", export)
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0,))
+        await window.create_model()
+        window.model_step.description.text = "Modelo"
+        await _save(window)
+        export.assert_not_called()
+        errors.assert_not_called()
+        notices.assert_not_called()
+        assert window.model_step.status.text.startswith("Model created successfully")
+
+    asyncio.run(exercise())
+
+
+def test_existing_metadata_file_needs_confirmation_before_it_is_replaced(
+    window: WorkflowWindow, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
+) -> None:
+    """The system dialog asks about the chosen file; the app asks about the metadata file it would also replace."""
+    _, notices, confirm = dialogs
+    metadata_file = tmp_path / "modelo_metadata.json"
+    metadata_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=str(tmp_path / "modelo.onnx")))
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0,))
+        await window.create_model()
+        window.model_step.description.text = "Modelo"
+        confirm.return_value = False
+        await _save(window)
+        assert str(metadata_file) in confirm.call_args.args[0]
+        assert metadata_file.read_text(encoding="utf-8") == "{}" and not (tmp_path / "modelo.onnx").exists()
+        confirm.return_value = True
+        await _save(window)
+        assert json.loads(metadata_file.read_text(encoding="utf-8"))["description"] == "Modelo"
+        notices.assert_called_once()
+
+    asyncio.run(exercise())
+
+
+def test_save_errors_are_reported_and_the_user_can_retry(
+    window: WorkflowWindow, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
+) -> None:
+    """A folder without permission shows a clear error, keeps the model and allows saving again."""
+    errors, notices, _ = dialogs
+    monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=str(tmp_path / "modelo.onnx")))
+    export = dataset_window.export_model
+
+    def denied(*args: object) -> None:
+        raise ModelExportError(f"There is no permission to save the model in '{tmp_path}'. Choose another folder.")
+
+    monkeypatch.setattr(dataset_window, "export_model", denied)
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0,))
+        await window.create_model()
+        window.model_step.description.text = "Modelo"
+        await _save(window)
+        errors.assert_called_once()
+        assert "no permission" in errors.call_args.args[0] and errors.call_args.kwargs == {"title": SAVE_ERROR_TITLE}
+        notices.assert_not_called()
+        assert window.model is not None and window.wizard.enabled and window.model_step.save_button.enabled
+        monkeypatch.setattr(dataset_window, "export_model", export)
+        await _save(window)
+        assert (tmp_path / "modelo.onnx").is_file()
+        notices.assert_called_once()
 
     asyncio.run(exercise())

@@ -1,6 +1,7 @@
 """Guided dataset workflow with modular forms and one persistent data preview."""
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Hashable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -23,9 +24,11 @@ from pysual import (
 from pysual.errors import LifecycleError
 
 from sustentable.core.io.exceptions import DataImportError
+from sustentable.core.io.export_model import MODEL_EXTENSION, ModelExportError, export_model, model_files
 from sustentable.core.io.readers import SUPPORTED_EXTENSIONS, get_reader
 from sustentable.core.model.regression import FitPlot, RegressionModel, create_model, fit_plot
 from sustentable.core.processing.data_processing import process_nan_values
+from sustentable.gui.controls.confirm_dialog import ConfirmDialog
 from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
@@ -39,6 +42,10 @@ from sustentable.gui.steps.split_step import SplitStep
 
 OPEN_ERROR_TITLE = "Unable to open dataset"
 MODEL_ERROR_TITLE = "Unable to create model"
+SAVE_ERROR_TITLE = "Unable to save model"
+SAVED_TITLE = "Model saved"
+# Characters that cannot appear in a file name on Windows, macOS or Linux.
+_UNSAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 # Fixed colors keep both subsets recognizable in any theme; translucent markers show where points overlap.
 TRAIN_COLOR = "#60a5facc"
 TEST_COLOR = "#fb923ccc"
@@ -94,6 +101,8 @@ class DatasetWindow(App):
         self.back = SidebarButton(parent=footer, text="Back", dock="right", width=80)
         self.feedback = Label(parent=self, height=24)
         self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
+        self.notice_dialog = ErrorDialog(title=SAVED_TITLE, width=760, height=340)
+        self.confirm_dialog = ConfirmDialog(width=760, height=300)
         self._refresh()
 
     async def columns_step_on_edited(self, event: UiEvent) -> None:
@@ -163,6 +172,53 @@ class DatasetWindow(App):
         kind = "simple" if model.is_simple else "multiple"
         self.fit_label.text = f"{self._dataset_name} · {kind} regression fit · training {len(train):,} + test {len(test):,} rows"
         self._refresh()
+
+    async def model_step_on_save_model(self, event: UiEvent) -> None:
+        """Ask where to save the model shown and save it off the UI thread; any failure keeps the app usable."""
+        if self._busy_message or self.model is None:
+            return
+        model, description = self.model, self.model_step.description_text
+        if not description and not await self.confirm_dialog.ask(
+            "The model has no description. A short description helps to recognize the model when it is loaded later.",
+            title="Empty description",
+            confirm_text="Save without description",
+            cancel_text="Add description",
+        ):
+            with suppress(LifecycleError):
+                self.model_step.description.focus()
+            return
+        try:
+            chosen = await self.choose_path(save=True, title="Save model", suggested_name=_suggested_name(model), extensions=(MODEL_EXTENSION,))
+        except (CapabilityError, OSError, ValueError) as error:
+            self.error_dialog.show_error(str(error), title=SAVE_ERROR_TITLE)
+            return
+        except LifecycleError:
+            return
+        if chosen is None:
+            return
+        try:
+            files = model_files(chosen)
+        except ValueError as error:
+            self.error_dialog.show_error(str(error), title=SAVE_ERROR_TITLE)
+            return
+        # The save dialog already asked about the file it returned; ask about any other file that would be replaced.
+        replaced = [path for path in files.paths if path != Path(chosen) and path.exists()]
+        if replaced and not await self.confirm_dialog.ask(
+            "These files already exist and will be replaced:\n" + "\n".join(str(path) for path in replaced),
+            title="Replace existing files?",
+            confirm_text="Replace",
+        ):
+            return
+        try:
+            async with self._busy("Saving model…"):
+                await asyncio.to_thread(export_model, model, files.model, description)
+        except (ModelExportError, OSError, ValueError) as error:
+            self.error_dialog.show_error(str(error), title=SAVE_ERROR_TITLE)
+            return
+        if self.model is model:
+            self.model_step.show_saved(files.model)
+            self._refresh()
+        self.notice_dialog.show_error(f"Model saved to:\n{files.model}\n\nMetadata saved to:\n{files.metadata}", title=SAVED_TITLE)
 
     def _show_fit(self, plot: FitPlot) -> None:
         """Draw both subsets and the model line, keeping the previous chart if the data cannot be drawn."""
@@ -363,6 +419,12 @@ def _train_model(train: DataFrame, test: DataFrame, inputs: list[Hashable], outp
     """Create the model and its chart data in a worker without accessing UI controls."""
     model = create_model(train, test, inputs, output)
     return model, fit_plot(model, train, test)
+
+
+def _suggested_name(model: RegressionModel) -> str:
+    """Propose a file name based on the output column, keeping only characters every file system accepts."""
+    stem = _UNSAFE_NAME.sub("_", f"{model.output}_model").strip(" .") or "model"
+    return stem + MODEL_EXTENSION
 
 
 def main() -> None:
