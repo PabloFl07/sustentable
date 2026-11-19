@@ -1,11 +1,16 @@
-import pickle, joblib
+import pickle
+
+import joblib
+
 
 class TestObject:
     def __reduce__(self):
         return (print, ("Code executed during loading!",))
 
+
 # Save the object
 obj = TestObject()
+
 
 def test_pickle():
 
@@ -14,13 +19,12 @@ def test_pickle():
 
     # Load the object
     with open("test.pkl", "rb") as file:
-        loaded_obj = pickle.load(file)
-
+        _ = pickle.load(file)
 
 
 def test_joblib():
 
     joblib.dump(obj, "test.joblib")
-    
+
     # Load the object
-    loaded_obj = joblib.load("test.joblib")
+    _ = joblib.load("test.joblib")

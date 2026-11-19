@@ -1,7 +1,8 @@
-import json, joblib
+import json
+
+import joblib
 import numpy as np
 from sklearn.linear_model import LinearRegression
-
 
 ## SAVING USING JSON
 
@@ -12,11 +13,8 @@ data = {
     "formula": "y = 2.5*x1 + 1.8*x2 + 0.7",
     "input_columns": ["temperature", "humidity"],
     "output_columns": ["consumption"],
-    "metrics": {
-        "train": {"r2": 0.95},
-        "test": {"r2": 0.91}
-    },
-    "description": "Energy consumption prediction model."
+    "metrics": {"train": {"r2": 0.95}, "test": {"r2": 0.91}},
+    "description": "Energy consumption prediction model.",
 }
 
 with open("model.json", "w", encoding="utf-8") as file:
@@ -43,11 +41,8 @@ data = {
     "formula": "y = a*x + b",
     "input_columns": ["temperature", "humidity"],
     "output_columns": ["consumption"],
-    "metrics": {
-        "train": {"r2": 0.95},
-        "test": {"r2": 0.91}
-    },
-    "description": "Energy consumption prediction model."
+    "metrics": {"train": {"r2": 0.95}, "test": {"r2": 0.91}},
+    "description": "Energy consumption prediction model.",
 }
 
 joblib.dump(data, "model.joblib")
