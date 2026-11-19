@@ -30,7 +30,7 @@ from skl2onnx.common.data_types import FloatTensorType
 from sustentable.core.model.regression import Metrics, RegressionModel
 
 MODEL_EXTENSION = ".onnx"
-METADATA_SUFFIX = "_metadata.json"
+#METADATA_SUFFIX = "_metadata.json"
 FORMAT_NAME = "ONNX"
 FORMAT_VERSION = "1.0"
 ONNX_INPUT_NAME = "input"
@@ -45,12 +45,12 @@ class ModelFiles:
     """Paths of the two files that make up a saved model."""
 
     model: Path
-    metadata: Path
+    
 
     @property
     def paths(self) -> tuple[Path, Path]:
         """Both paths, the ONNX model first."""
-        return self.model, self.metadata
+        return (self.model,)
 
 
 def model_files(path: str | os.PathLike[str]) -> ModelFiles:
@@ -66,7 +66,7 @@ def model_files(path: str | os.PathLike[str]) -> ModelFiles:
         raise ValueError("Choose a file name to save the model.")
     if chosen.suffix.lower() != MODEL_EXTENSION:
         chosen = chosen.with_name(chosen.name + MODEL_EXTENSION)
-    return ModelFiles(model=chosen, metadata=chosen.with_name(chosen.stem + METADATA_SUFFIX))
+    return ModelFiles(model=chosen)
 
 
 def build_metadata(model: RegressionModel, description: str = "", model_file: str = "") -> dict[str, Any]:
@@ -120,14 +120,13 @@ def export_model(model: RegressionModel, path: str | os.PathLike[str], descripti
     except Exception as error:  # skl2onnx and onnx raise many unrelated exception types.
         raise ModelExportError(f"The model could not be converted to {FORMAT_NAME}: {error}") from error
     
-    metadata_bytes = (json.dumps(metadata, indent=4, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
     folder = files.model.parent
     if not folder.is_dir():
         raise ModelExportError(f"The folder '{folder}' does not exist. Choose another folder to save the model.")
     temporary: list[Path] = []
     try:
-        for data in (onnx_bytes, metadata_bytes):
+        for data in (onnx_bytes,):
             temporary.append(_write_temporary(folder, data))
         for source, target in zip(temporary, files.paths, strict=True):
             os.replace(source, target)
