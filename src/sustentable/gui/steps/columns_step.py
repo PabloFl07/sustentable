@@ -150,7 +150,7 @@ class ColumnsStep(Step):
         self.mode.text = "Simple regression" if len(inputs) == 1 else "Multiple regression"
         input_texts = [self._texts[position] for position in inputs]
         self._show_chips(self.output_chips, [self._texts[output]], primary=True)
-        self.input_caption.text = "INPUTS (X) · " + str(len(inputs))
+        self.input_caption.text = "INPUTS (X) : " + str(len(inputs))
         self._show_chips(self.input_chips, input_texts, primary=False)
         self.summary_box.visible = True
 
@@ -166,7 +166,7 @@ class ColumnsStep(Step):
             text_color = self._tokens.foreground
         for text in texts:
             chip = Container(parent=holder, layout="stack", padding=5, background=fill)
-            Label(parent=chip, text=text, font_size=15, foreground=text_color, background=fill)
+            Label(parent=chip, text=text, font_size=20, foreground=text_color, background=fill)
 
 
 def _distinct_texts(columns: list[Hashable]) -> list[str]:

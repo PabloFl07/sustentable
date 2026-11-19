@@ -47,7 +47,7 @@ class PreprocessStep(Step):
         Label(parent=constant_row, text="Constant value", width=112)
         self.constant = TextBox(parent=constant_row, placeholder="Numeric value, e.g. 0", flex=1)
         self.apply_button = Button(parent=options, text="Apply preprocessing", width=200, height=36)
-        self.status = Label(parent=options, text="", height=24, word_wrap=True)
+        self.status = Label(parent=options, text="", flex=1, word_wrap=True)
         self._refresh()
 
     def load(self, train: DataFrame | None, test: DataFrame | None, columns: list[Hashable]) -> None:
@@ -87,12 +87,13 @@ class PreprocessStep(Step):
         return _NO_SPLIT if self._report is None else ""
 
     def show_result(self, result: PreprocessResult) -> None:
-        """Describe the outcome of an applied strategy for each subset."""
+        """Describe the outcome of an applied strategy for each subset, followed by its warnings."""
         noun = "rows removed" if result.strategy is NanStrategy.DELETE else "values filled"
         if self._report is not None:
             self._current = detect_nan_values(result.train, result.test, self._report.column)
         self._refresh()
-        self.status.text = f"Preprocessing applied. Training: {result.train_changes:,} {noun} · Test: {result.test_changes:,} {noun}."
+        status = f"Preprocessing applied. Training: {result.train_changes:,} {noun} · Test: {result.test_changes:,} {noun}."
+        self.status.text = " ".join([status, *(f"Warning: {warning}" for warning in result.warnings)])
 
     def clear_result(self) -> None:
         """Show the missing values of the split again after an applied result is discarded."""
