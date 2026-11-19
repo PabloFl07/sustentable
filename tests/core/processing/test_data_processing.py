@@ -277,3 +277,39 @@ def test_parse_constant_rejects_underscores() -> None:
     """Underscores are Python syntax, not a number format a user would type."""
     with pytest.raises(ValueError):
         parse_constant("1_000")
+
+
+# ----------------------------------------------------------------------------
+# Representativeness of the mean and median
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("strategy", [NanStrategy.MEAN, NanStrategy.MEDIAN])
+def test_mean_and_median_refuse_columns_missing_most_training_values(test: DataFrame, strategy: NanStrategy) -> None:
+    """More than half of the training values missing makes the fill value unrepresentative, so it is refused."""
+    train = DataFrame({"x": [1.0, NAN, NAN, NAN]})
+    with pytest.raises(ValueError, match=r"missing 3 of its 4 training values \(75%\)"):
+        process_nan_values(train, test, ["x"], strategy)
+
+
+@pytest.mark.parametrize("strategy", [NanStrategy.MEAN, NanStrategy.MEDIAN])
+def test_mean_and_median_warn_about_columns_missing_many_training_values(train: DataFrame, test: DataFrame, strategy: NanStrategy) -> None:
+    """Columns missing more than a fifth of their training values are named in the warnings, but still filled."""
+    clean = train.assign(y=[10.0, 20.0, 30.0, 40.0])
+    result = process_nan_values(clean, test, COLUMNS, strategy)
+    assert len(result.warnings) == 1 and "'x' is missing 25%" in result.warnings[0] and "only 3 values" in result.warnings[0]
+    assert not has_nan_values(result.train, result.test, COLUMNS)
+
+
+@pytest.mark.parametrize(("missing", "warned"), [(2, False), (3, True), (5, True)])
+def test_limits_are_exclusive(test: DataFrame, missing: int, warned: bool) -> None:
+    """Out of 10 training values, exactly 20% missing does not warn and exactly 50% missing is still filled."""
+    train = DataFrame({"x": [NAN] * missing + [1.0] * (10 - missing)})
+    assert bool(process_nan_values(train, test, ["x"], NanStrategy.MEAN).warnings) is warned
+
+
+@pytest.mark.parametrize("strategy", [NanStrategy.DELETE, NanStrategy.CONSTANT])
+def test_other_strategies_ignore_the_missing_share(test: DataFrame, strategy: NanStrategy) -> None:
+    """Deleting rows or filling a constant does not depend on the training values, so it is never refused or warned."""
+    train = DataFrame({"x": [1.0, NAN, NAN, NAN]})
+    assert process_nan_values(train, test, ["x"], strategy, 0.0).warnings == ()

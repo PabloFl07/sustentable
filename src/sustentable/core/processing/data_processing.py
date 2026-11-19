@@ -2,6 +2,7 @@
 
 Every function works on copies: the subsets passed in, and the file on disk, are never changed.
 Fill values for the mean and median strategies come from the training subset only and are reused for the test subset.
+Those strategies warn when many training values of a column are missing, and refuse when too few remain to be representative.
 """
 
 import math
@@ -11,6 +12,11 @@ from enum import StrEnum
 
 from pandas import DataFrame
 from pandas.api.types import is_numeric_dtype
+
+MISSING_WARNING_RATIO = 0.2
+"""Missing share of a training column above which a mean or median fill is reported as possibly unrepresentative."""
+MISSING_LIMIT_RATIO = 0.5
+"""Missing share of a training column above which a mean or median fill is refused."""
 
 
 class NanStrategy(StrEnum):
@@ -31,6 +37,7 @@ class PreprocessResult:
     strategy: NanStrategy
     train_changes: int
     test_changes: int
+    warnings: tuple[str, ...] = ()
 
 
 def detect_nan_values(train: DataFrame, test: DataFrame, columns: Iterable[Hashable]) -> DataFrame:
@@ -99,11 +106,14 @@ def process_nan_values(
 
     Returns:
         The processed copies and, per subset, the rows removed (delete) or values filled (other strategies).
+        For the mean and median, ``warnings`` names each column missing more than ``MISSING_WARNING_RATIO``
+        of its training values.
 
     Raises:
         ValueError: If the strategy is unknown, the constant is missing or not finite, a column cannot be
-            averaged, the training subset has no values to compute a fill value, or deleting rows would
-            leave a subset empty.
+            averaged, the training subset has no values to compute a fill value, more than
+            ``MISSING_LIMIT_RATIO`` of a column's training values are missing for the mean or median, or
+            deleting rows would leave a subset empty.
     """
     try:
         strategy = NanStrategy(strategy)
@@ -120,8 +130,9 @@ def process_nan_values(
         return PreprocessResult(processed_train, processed_test, strategy, len(train) - len(processed_train), len(test) - len(processed_test))
 
     fill_values = _fill_values(train, selected, strategy, constant_value)
+    warnings = () if strategy is NanStrategy.CONSTANT else _representativeness_warnings(train, selected, strategy)
     train_changes, test_changes = _missing_count(train, selected), _missing_count(test, selected)
-    return PreprocessResult(train.fillna(fill_values), test.fillna(fill_values), strategy, train_changes, test_changes)
+    return PreprocessResult(train.fillna(fill_values), test.fillna(fill_values), strategy, train_changes, test_changes, warnings)
 
 
 def _fill_values(train: DataFrame, columns: list[Hashable], strategy: NanStrategy, constant_value: float | None) -> dict[Hashable, float]:
@@ -141,8 +152,28 @@ def _fill_values(train: DataFrame, columns: list[Hashable], strategy: NanStrateg
         value = series.mean() if strategy is NanStrategy.MEAN else series.median()
         if math.isnan(value):
             raise ValueError(f"Column '{column}' has no values in the training subset to compute its {strategy}.")
+        missing, total = int(series.isna().sum()), len(series)
+        if missing > MISSING_LIMIT_RATIO * total:
+            raise ValueError(
+                f"Column '{column}' is missing {missing:,} of its {total:,} training values ({missing / total:.0%}), "
+                f"so its {strategy} would not be representative. "
+                f"The limit is {MISSING_LIMIT_RATIO:.0%}; delete the rows or fill with a constant instead."
+            )
         values[column] = float(value)
     return values
+
+
+def _representativeness_warnings(train: DataFrame, columns: list[Hashable], strategy: NanStrategy) -> tuple[str, ...]:
+    """Describe each column whose fill value comes from a training subset with many missing values."""
+    warnings = []
+    for column in columns:
+        missing, total = int(train[column].isna().sum()), len(train)
+        if missing > MISSING_WARNING_RATIO * total:
+            warnings.append(
+                f"Column '{column}' is missing {missing / total:.0%} of its training values; "
+                f"its {strategy} comes from only {total - missing:,} values and may not be representative."
+            )
+    return tuple(warnings)
 
 
 def _missing_count(frame: DataFrame, columns: list[Hashable]) -> int:
