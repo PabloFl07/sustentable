@@ -45,6 +45,7 @@ class ModelFiles:
     """Paths of the two files that make up a saved model."""
 
     model: Path
+
     
 
     @property

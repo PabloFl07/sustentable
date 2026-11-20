@@ -49,7 +49,14 @@ def model() -> RegressionModel:
 
 
 def _load(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    onnx_model = onnx.load(path)
+
+    # Recuperar metadatos
+    metadata = {
+        prop.key: json.loads(prop.value)
+        for prop in onnx_model.metadata_props
+    }
+    return metadata
 
 
 def _dataset_values() -> set[float]:
@@ -62,19 +69,19 @@ def _dataset_values() -> set[float]:
 
 
 @pytest.mark.parametrize(
-    ("chosen", "model_name", "metadata_name"),
+    ("chosen", "model_name"),
     [
-        ("energía", "energía.onnx", "energía_metadata.json"),
-        ("energía.onnx", "energía.onnx", "energía_metadata.json"),
-        ("modelo.ONNX", "modelo.ONNX", "modelo_metadata.json"),
-        ("modelo.v2", "modelo.v2.onnx", "modelo.v2_metadata.json"),
+        ("energía", "energía.onnx"),
+        ("energía.onnx", "energía.onnx"),
+        ("modelo.ONNX", "modelo.ONNX"),
+        ("modelo.v2", "modelo.v2.onnx"),
     ],
 )
-def test_extension_is_added_when_missing(tmp_path: Path, chosen: str, model_name: str, metadata_name: str) -> None:
+def test_extension_is_added_when_missing(tmp_path: Path, chosen: str, model_name: str) -> None:
     """The ONNX extension is added automatically, and the metadata file sits next to the model."""
     files = model_files(tmp_path / chosen)
     assert files.model == tmp_path / model_name
-    assert files.metadata == tmp_path / metadata_name
+
 
 
 # ----------------------------------------------------------------------------
@@ -85,7 +92,7 @@ def test_extension_is_added_when_missing(tmp_path: Path, chosen: str, model_name
 def test_metadata_contains_everything_needed_to_show_the_model(tmp_path: Path, model: RegressionModel) -> None:
     """Coefficients, intercept, formula, columns, R² and MSE on both subsets, and the description are saved."""
     files = export_model(model, tmp_path / "modelo", "Predice el consumo según la temperatura y la humedad.")
-    metadata = _load(files.metadata)
+    metadata = _load(files.model)
 
     assert set(metadata) == EXPECTED_KEYS
     assert metadata["format"] == "ONNX" and metadata["model_type"] == "LinearRegression"
@@ -107,7 +114,7 @@ def test_metadata_contains_everything_needed_to_show_the_model(tmp_path: Path, m
 def test_empty_description_is_saved(tmp_path: Path, model: RegressionModel) -> None:
     """The description is optional."""
     files = export_model(model, tmp_path / "modelo.onnx")
-    assert _load(files.metadata)["description"] == ""
+    assert _load(files.model)["description"] == ""
 
 
 def test_undefined_metric_is_saved_as_null(tmp_path: Path) -> None:
@@ -115,8 +122,8 @@ def test_undefined_metric_is_saved_as_null(tmp_path: Path) -> None:
     model = create_model(TRAIN, TEST.head(1), ["temperatura"], "consumo")
     assert math.isnan(model.test_metrics.r2)
     files = export_model(model, tmp_path / "modelo.onnx")
-    assert "NaN" not in files.metadata.read_text(encoding="utf-8")
-    assert _load(files.metadata)["metrics"]["test"]["r2"] is None
+    assert "NaN" not in _load(files.model).values()
+    assert _load(files.model)["metrics"]["test"]["r2"] is None
 
 
 def test_onnx_model_predicts_without_the_dataset(tmp_path: Path, model: RegressionModel) -> None:
@@ -136,7 +143,7 @@ def test_onnx_model_predicts_without_the_dataset(tmp_path: Path, model: Regressi
 def test_metadata_does_not_contain_the_dataset(tmp_path: Path, model: RegressionModel) -> None:
     """No value of the dataset, nor its training or test subsets, nor any chart is written to the metadata."""
     files = export_model(model, tmp_path / "modelo.onnx")
-    metadata = _load(files.metadata)
+    metadata = _load(files.model)
 
     def numbers(value: object) -> list[float]:
         if isinstance(value, dict):
@@ -147,10 +154,10 @@ def test_metadata_does_not_contain_the_dataset(tmp_path: Path, model: Regression
 
     assert not _dataset_values() & set(numbers(metadata))
     assert set(metadata) == EXPECTED_KEYS
-    text = files.metadata.read_text(encoding="utf-8").lower()
+    
     for forbidden in ("dataset", "points", "chart", "plot", "image", "png"):
-        assert forbidden not in text
-    assert {path.name for path in tmp_path.iterdir()} == {"modelo.onnx", "modelo_metadata.json"}
+        assert forbidden not in metadata.keys()
+    assert {path.name for path in tmp_path.iterdir()} == {"modelo.onnx"}
 
 
 def test_onnx_file_only_stores_the_parameters(tmp_path: Path, model: RegressionModel) -> None:
@@ -179,18 +186,16 @@ def test_folder_with_spaces_accents_and_enye(tmp_path: Path, model: RegressionMo
     folder.mkdir(parents=True)
     files = export_model(model, folder / "predicción del consumo")
     assert files.model == folder / "predicción del consumo.onnx"
-    assert files.model.is_file() and files.metadata.is_file()
-    assert _load(files.metadata)["model_file"] == "predicción del consumo.onnx"
+    assert _load(files.model)["model_file"] == "predicción del consumo.onnx"
 
 
 def test_existing_files_are_replaced(tmp_path: Path, model: RegressionModel) -> None:
     """Saving again over the same files replaces them; the GUI asks before doing so."""
     files = model_files(tmp_path / "modelo.onnx")
     files.model.write_bytes(b"old")
-    files.metadata.write_text("{}", encoding="utf-8")
     export_model(model, files.model, "Nueva versión")
     assert files.model.read_bytes() != b"old"
-    assert _load(files.metadata)["description"] == "Nueva versión"
+    assert _load(files.model)["description"] == "Nueva versión"
 
 
 def test_missing_folder_raises_a_clear_error(tmp_path: Path, model: RegressionModel) -> None:

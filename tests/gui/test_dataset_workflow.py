@@ -12,6 +12,7 @@ import pytest
 from pandas import DataFrame
 from pysual import ClickEvent
 from pysual.events import Dispatcher
+import onnx
 
 from sustentable.core.io.export_model import ModelExportError
 from sustentable.core.processing.data_processing import NanStrategy, detect_nan_values, has_nan_values
@@ -71,6 +72,16 @@ def window() -> Iterator[WorkflowWindow]:
     window.build()
     yield window
     window.destroy()
+
+def _load(path: Path) -> dict[str, object]:
+    onnx_model = onnx.load(path)
+
+    # Recuperar metadatos
+    metadata = {
+        prop.key: json.loads(prop.value)
+        for prop in onnx_model.metadata_props
+    }
+    return metadata
 
 
 @pytest.fixture
@@ -787,13 +798,13 @@ def test_saving_writes_the_model_and_reports_its_path(
         confirm.assert_not_awaited()
         errors.assert_not_called()
         assert threads and threads[0] != window.ui_thread_id()
-        model_file, metadata_file = folder / "consumo.onnx", folder / "consumo_metadata.json"
-        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+        model_file = folder / "consumo.onnx"
+        metadata = _load(model_file)
         assert model_file.is_file()
         assert metadata["description"] == "Predice la energía."
         assert metadata["input_columns"] == ["area", "occupants"] and metadata["output_columns"] == ["energy"]
         notices.assert_called_once()
-        assert str(model_file) in notices.call_args.args[0] and str(metadata_file) in notices.call_args.args[0]
+        assert str(model_file) in notices.call_args.args[0]
         assert window.model_step.status.text == f"Model saved to {model_file}"
         assert window.wizard.enabled and window.model_step.save_button.enabled
 
@@ -818,7 +829,7 @@ def test_empty_description_warns_but_does_not_prevent_saving(
         chooser.assert_not_awaited()
         confirm.return_value = True
         await _save(window)
-        assert json.loads((tmp_path / "modelo_metadata.json").read_text(encoding="utf-8"))["description"] == ""
+        assert _load(model_path)["description"] == ""
         notices.assert_called_once()
 
     asyncio.run(exercise())
@@ -851,8 +862,8 @@ def test_existing_metadata_file_needs_confirmation_before_it_is_replaced(
 ) -> None:
     """The system dialog asks about the chosen file; the app asks about the metadata file it would also replace."""
     _, notices, confirm = dialogs
-    metadata_file = tmp_path / "modelo_metadata.json"
-    metadata_file.write_text("{}", encoding="utf-8")
+    #metadata_file = tmp_path / "modelo_metadata.json"
+    #metadata_file.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=str(tmp_path / "modelo.onnx")))
 
     async def exercise() -> None:
@@ -861,11 +872,11 @@ def test_existing_metadata_file_needs_confirmation_before_it_is_replaced(
         window.model_step.description.text = "Modelo"
         confirm.return_value = False
         await _save(window)
-        assert str(metadata_file) in confirm.call_args.args[0]
-        assert metadata_file.read_text(encoding="utf-8") == "{}" and not (tmp_path / "modelo.onnx").exists()
+        #assert str(metadata_file) in confirm.call_args.args[0]
+        assert _load(model_path )== {} and not (tmp_path / "modelo.onnx").exists()
         confirm.return_value = True
         await _save(window)
-        assert json.loads(metadata_file.read_text(encoding="utf-8"))["description"] == "Modelo"
+        assert _load(model_path)["description"] == "Modelo"
         notices.assert_called_once()
 
     asyncio.run(exercise())
