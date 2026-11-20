@@ -52,10 +52,7 @@ def _load(path: Path) -> dict[str, object]:
     onnx_model = onnx.load(path)
 
     # Recuperar metadatos
-    metadata = {
-        prop.key: json.loads(prop.value)
-        for prop in onnx_model.metadata_props
-    }
+    metadata = {prop.key: json.loads(prop.value) for prop in onnx_model.metadata_props}
     return metadata
 
 
@@ -81,7 +78,6 @@ def test_extension_is_added_when_missing(tmp_path: Path, chosen: str, model_name
     """The ONNX extension is added automatically, and the metadata file sits next to the model."""
     files = model_files(tmp_path / chosen)
     assert files.model == tmp_path / model_name
-
 
 
 # ----------------------------------------------------------------------------
@@ -154,7 +150,7 @@ def test_metadata_does_not_contain_the_dataset(tmp_path: Path, model: Regression
 
     assert not _dataset_values() & set(numbers(metadata))
     assert set(metadata) == EXPECTED_KEYS
-    
+
     for forbidden in ("dataset", "points", "chart", "plot", "image", "png"):
         assert forbidden not in metadata.keys()
     assert {path.name for path in tmp_path.iterdir()} == {"modelo.onnx"}

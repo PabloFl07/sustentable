@@ -225,7 +225,7 @@ class DatasetWindow(App):
         if self.model is model:
             self.model_step.show_saved(files.model)
             self._refresh()
-        self.notice_dialog.show_error(f"Model saved to:\n{files.model}\n\nMetadata saved to:\n{files.metadata}", title=SAVED_TITLE)
+        self.notice_dialog.show_error(f"Model saved to:\n{files.model}", title=SAVED_TITLE)
 
     def _show_fit(self, plot: FitPlot) -> None:
         """Draw both subsets and the model line, keeping the previous chart if the data cannot be drawn."""

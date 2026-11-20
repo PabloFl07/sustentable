@@ -30,7 +30,7 @@ from skl2onnx.common.data_types import FloatTensorType
 from sustentable.core.model.regression import Metrics, RegressionModel
 
 MODEL_EXTENSION = ".onnx"
-#METADATA_SUFFIX = "_metadata.json"
+# METADATA_SUFFIX = "_metadata.json"
 FORMAT_NAME = "ONNX"
 FORMAT_VERSION = "1.0"
 ONNX_INPUT_NAME = "input"
@@ -45,8 +45,6 @@ class ModelFiles:
     """Paths of the two files that make up a saved model."""
 
     model: Path
-
-    
 
     @property
     def paths(self) -> tuple[Path, Path]:
@@ -117,10 +115,9 @@ def export_model(model: RegressionModel, path: str | os.PathLike[str], descripti
     files = model_files(path)
     metadata = build_metadata(model, description, files.model.name)
     try:
-        onnx_bytes = _onnx_bytes(model,metadata)
+        onnx_bytes = _onnx_bytes(model, metadata)
     except Exception as error:  # skl2onnx and onnx raise many unrelated exception types.
         raise ModelExportError(f"The model could not be converted to {FORMAT_NAME}: {error}") from error
-    
 
     folder = files.model.parent
     if not folder.is_dir():
@@ -142,18 +139,12 @@ def export_model(model: RegressionModel, path: str | os.PathLike[str], descripti
     return files
 
 
-def _onnx_bytes(model: RegressionModel,metadata:dict) -> bytes:
+def _onnx_bytes(model: RegressionModel, metadata: dict) -> bytes:
     """Convert the estimator to a validated ONNX model that takes a float32 matrix with one column per input."""
     initial_types = [(ONNX_INPUT_NAME, FloatTensorType([None, len(model.inputs)]))]
     onnx_model = convert_sklearn(model.estimator, initial_types=initial_types)
     onnx_model.doc_string = model.formula
-    onnx.helper.set_model_props(
-        onnx_model,
-        {
-            key: json.dumps(value, ensure_ascii=False)
-            for key, value in metadata.items()
-        }
-    )
+    onnx.helper.set_model_props(onnx_model, {key: json.dumps(value, ensure_ascii=False) for key, value in metadata.items()})
     onnx.checker.check_model(onnx_model)
     return onnx_model.SerializeToString()
 

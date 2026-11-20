@@ -8,11 +8,11 @@ from threading import Event as ThreadEvent
 from threading import get_ident
 from unittest.mock import AsyncMock, Mock
 
+import onnx
 import pytest
 from pandas import DataFrame
 from pysual import ClickEvent
 from pysual.events import Dispatcher
-import onnx
 
 from sustentable.core.io.export_model import ModelExportError
 from sustentable.core.processing.data_processing import NanStrategy, detect_nan_values, has_nan_values
@@ -73,14 +73,12 @@ def window() -> Iterator[WorkflowWindow]:
     yield window
     window.destroy()
 
+
 def _load(path: Path) -> dict[str, object]:
     onnx_model = onnx.load(path)
 
     # Recuperar metadatos
-    metadata = {
-        prop.key: json.loads(prop.value)
-        for prop in onnx_model.metadata_props
-    }
+    metadata = {prop.key: json.loads(prop.value) for prop in onnx_model.metadata_props}
     return metadata
 
 
@@ -829,7 +827,7 @@ def test_empty_description_warns_but_does_not_prevent_saving(
         chooser.assert_not_awaited()
         confirm.return_value = True
         await _save(window)
-        assert _load(model_path)["description"] == ""
+        assert _load(tmp_path / "modelo.onnx")["description"] == ""
         notices.assert_called_once()
 
     asyncio.run(exercise())
@@ -857,14 +855,13 @@ def test_cancelling_the_dialog_saves_nothing_and_shows_no_error(
     asyncio.run(exercise())
 
 
-def test_existing_metadata_file_needs_confirmation_before_it_is_replaced(
+def test_saving_does_not_confirm_a_separate_metadata_file(
     window: WorkflowWindow, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
 ) -> None:
-    """The system dialog asks about the chosen file; the app asks about the metadata file it would also replace."""
+    """Metadata is stored in the ONNX file, so saving does not ask to replace a second file."""
     _, notices, confirm = dialogs
-    #metadata_file = tmp_path / "modelo_metadata.json"
-    #metadata_file.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=str(tmp_path / "modelo.onnx")))
+    model_file = tmp_path / "modelo.onnx"
+    monkeypatch.setattr(DatasetWindow, "choose_path", AsyncMock(return_value=str(model_file)))
 
     async def exercise() -> None:
         await _open_model_step(window, model_path, (0,))
@@ -872,12 +869,10 @@ def test_existing_metadata_file_needs_confirmation_before_it_is_replaced(
         window.model_step.description.text = "Modelo"
         confirm.return_value = False
         await _save(window)
-        #assert str(metadata_file) in confirm.call_args.args[0]
-        assert _load(model_path )== {} and not (tmp_path / "modelo.onnx").exists()
-        confirm.return_value = True
-        await _save(window)
-        assert _load(model_path)["description"] == "Modelo"
+        confirm.assert_not_awaited()
+        assert _load(model_file)["description"] == "Modelo"
         notices.assert_called_once()
+        assert str(model_file) in notices.call_args.args[0]
 
     asyncio.run(exercise())
 
