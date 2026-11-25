@@ -131,8 +131,7 @@ def test_guidance_confirmation_optional_steps_and_shared_preview(window: Workflo
         await window.request_step(5)
         assert window.wizard.selected_index == 4, "Predictions need a model first."
         await window.create_model()
-        for step in window.wizard.steps[5:]:
-            assert step.optional and not step.children and not step.completed
+        assert window.wizard.steps[5] is window.predict_step and window.predict_step.optional
         await window.request_step(5)
         assert window.wizard.selected_index == 5
         assert not window.advance.enabled
@@ -933,5 +932,97 @@ def test_save_errors_are_reported_and_the_user_can_retry(
         await _save(window)
         assert (tmp_path / "modelo.onnx").is_file()
         notices.assert_called_once()
+
+    asyncio.run(exercise())
+
+
+# ----------------------------------------------------------------------------
+# Predictions
+# ----------------------------------------------------------------------------
+
+
+async def _predict(window: WorkflowWindow, **values: str) -> None:
+    """Type ``values`` in the prediction fields and click the prediction button."""
+    for column, text in values.items():
+        window.predict_step.fields[column].text = text
+    button = window.predict_step.predict_button
+    button.click.emit(ClickEvent(source=button))
+    await window.settle()
+
+
+def test_prediction_step_is_disabled_until_a_model_exists(window: WorkflowWindow, model_path: Path) -> None:
+    """Without a model there are no fields and the button is disabled; the step cannot be reached either."""
+
+    async def exercise() -> None:
+        step = window.predict_step
+        assert step.model is None and not step.fields and not step.predict_button.enabled
+        assert step.status.text == "Create or load a model to make predictions."
+        await _open_model_step(window, model_path, (0, 1))
+        await window.request_step(5)
+        assert window.wizard.selected_index == 4
+        await window.create_model()
+        assert step.model is window.model and step.predict_button.enabled
+        await window.press_continue()
+        assert window.wizard.selected_step is step
+
+    asyncio.run(exercise())
+
+
+def test_prediction_with_the_created_model_shows_the_output_value(window: WorkflowWindow, model_path: Path) -> None:
+    """One labeled field per input; commas and points are accepted and the result uses the formula decimals."""
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0, 1))
+        await window.create_model()
+        step = window.predict_step
+        assert list(step.fields) == ["area", "occupants"]
+        await _predict(window, area="10", occupants="2,5")
+        assert step.result.text == "energy = 62.5000" and not step.has_error
+        await _predict(window, area="10.0", occupants="2.5")
+        assert step.result.text == "energy = 62.5000"
+
+    asyncio.run(exercise())
+
+
+def test_prediction_errors_name_the_fields_and_the_user_can_retry(window: WorkflowWindow, model_path: Path) -> None:
+    """Missing and non-numeric values are reported without breaking the window."""
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0, 1))
+        await window.create_model()
+        step = window.predict_step
+        await _predict(window, area="3")
+        assert step.has_error and step.status.text == "Enter a value for 'occupants'." and step.result.text == "—"
+        await _predict(window, occupants="tres")
+        assert step.has_error and step.status.text == "The value of 'occupants' is not a valid number."
+        await _predict(window, occupants="1")
+        assert not step.has_error and step.result.text == "energy = 53.0000"
+        assert window.wizard.enabled
+
+    asyncio.run(exercise())
+
+
+def test_new_or_discarded_models_regenerate_the_fields_and_clear_the_result(window: WorkflowWindow, model_path: Path) -> None:
+    """Fields follow the inputs of the current model, and a previous prediction is never left behind."""
+
+    async def exercise() -> None:
+        await _open_model_step(window, model_path, (0, 1))
+        await window.create_model()
+        step = window.predict_step
+        await _predict(window, area="1", occupants="1")
+        assert step.result.text != "—"
+
+        await window.request_step(1)
+        await window.choose_columns((0,))
+        assert step.model is None and not step.fields and step.result.text == "—" and not step.predict_button.enabled
+
+        for _ in range(3):
+            await window.press_continue()
+        await window.create_model()
+        assert list(step.fields) == ["area"] and step.fields["area"].text == "" and step.result.text == "—"
+        await _predict(window, area="0")
+        assert step.result.text == f"energy = {window.model.intercept:.4f}"
+        await window.create_model()
+        assert step.fields["area"].text == "" and step.result.text == "—"
 
     asyncio.run(exercise())

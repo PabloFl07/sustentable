@@ -15,7 +15,6 @@ from pysual import (
     ClickEvent,
     Container,
     Label,
-    Step,
     Stepper,
     UiEvent,
     autoconfig,  # noqa: F401 (importing it applies pysual's environment defaults)
@@ -39,6 +38,7 @@ from sustentable.gui.start_screen import StartScreen
 from sustentable.gui.steps.columns_step import ColumnsStep
 from sustentable.gui.steps.dataset_step import DatasetStep
 from sustentable.gui.steps.model_step import ModelStep
+from sustentable.gui.steps.predict_step import PredictStep
 from sustentable.gui.steps.preprocess_step import PreprocessStep
 from sustentable.gui.steps.split_step import SplitStep
 
@@ -93,7 +93,7 @@ class DatasetWindow(App):
         self.split_step = SplitStep(parent=self.wizard)
         self.preprocess_step = PreprocessStep(parent=self.wizard)
         self.model_step = ModelStep(parent=self.wizard, tokens=self.theme.tokens)
-        Step(parent=self.wizard, title="Predict", optional=True, height=0, padding=0)
+        self.predict_step = PredictStep(parent=self.wizard, tokens=self.theme.tokens)
         self.loading_row = Container(parent=self, layout="stack", direction="horizontal", spacing=8, height=24, visible=False)
         self.loading_spinner = LoadingSpinner(parent=self.loading_row, width=24, height=24)
         self.loading_label = Label(parent=self.loading_row, flex=1)
@@ -176,6 +176,7 @@ class DatasetWindow(App):
             return
         self.model = model
         self.model_step.show_model(model)
+        self.predict_step.show_model(model)
         kind = "simple" if model.is_simple else "multiple"
         self.fit_label.text = f"{self._dataset_name} · {kind} regression fit · training {len(train):,} + test {len(test):,} rows"
         self._refresh()
@@ -278,7 +279,7 @@ class DatasetWindow(App):
         self.wizard.enabled = self.dataset_step.open_dataset.enabled = self.start_screen.enabled = not self._busy_message
         self.back.enabled = not self._busy_message and self.wizard.selected_index > 0
         self.advance.text = "Continue"
-        self.feedback.text = "Not implemented yet."
+        self.feedback.text = ""
         problem = ""
         for step, issue, confirmed in (
             (self.dataset_step, "Open a dataset to begin." if self.dataset is None else "", self.dataset is not None),
@@ -286,6 +287,7 @@ class DatasetWindow(App):
             (self.split_step, self.split_step.problem, self.train_data is not None),
             (self.preprocess_step, self._preprocess_problem(), self.preprocessed_data is not None),
             (self.model_step, "" if self.model is not None else "Create the model to continue.", self.model is not None),
+            (self.predict_step, "" if self.predict_step.model is not None else "Create the model before making predictions.", True),
         ):
             confirmation = f"Confirm {step.title.lower()}"
             hint = issue or ("" if confirmed else f"{confirmation} to continue.")
@@ -299,6 +301,8 @@ class DatasetWindow(App):
                     done = self.preprocess_step.status.text or self.preprocess_step.summary.text
                 elif step is self.model_step:
                     done = self.model_step.status.text
+                elif step is self.predict_step:
+                    done = "Enter the input values and make a prediction with the model."
                 else:
                     done = "Ready to continue."
                 self.feedback.text = hint or done
@@ -355,6 +359,7 @@ class DatasetWindow(App):
         """Discard the model, which no longer matches the data prepared for it."""
         self.model = None
         self.model_step.clear_model()
+        self.predict_step.clear_model()
         self.fit_chart.clear()
 
     async def start_screen_on_load_model(self, event: UiEvent) -> None:
