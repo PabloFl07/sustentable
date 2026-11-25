@@ -294,7 +294,7 @@ class DatasetWindow(App):
             if step is self.wizard.selected_step:
                 problem = issue
                 if step is self.split_step:
-                    done = "Split confirmed. " + self.split_step.counts.text
+                    done = f"Split confirmed with seed {self.split_step.seed}. {self.split_step.counts.text}"
                 elif step is self.preprocess_step:
                     done = self.preprocess_step.status.text or self.preprocess_step.summary.text
                 elif step is self.model_step:

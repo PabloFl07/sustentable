@@ -267,6 +267,36 @@ def test_slider_preview_does_not_shuffle_and_confirmation_runs_in_worker(
     asyncio.run(exercise())
 
 
+def test_selected_seed_drives_the_split_is_shown_and_editing_it_clears_the_subsets(
+    window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The split uses the chosen seed, the confirmation reports it, and a new seed discards the old subsets."""
+    split = split_step.split_dataset
+    seeds = []
+
+    def observe_split(frame: DataFrame, fraction: float, seed: int) -> tuple[DataFrame, DataFrame]:
+        seeds.append(seed)
+        return split(frame, fraction, seed)
+
+    monkeypatch.setattr(split_step, "split_dataset", observe_split)
+
+    async def exercise() -> None:
+        await _confirmed_split(window, dataset_path)
+        assert seeds == [split_step.SPLIT_SEED]
+        await window.request_step(2)
+        assert f"seed {split_step.SPLIT_SEED}" in window.feedback.text
+        window.split_step.seed_input.value = 7
+        await window.settle()
+        assert window.train_data is None and window.test_data is None
+        await window.press_continue()
+        assert seeds == [split_step.SPLIT_SEED, 7]
+        expected_train, expected_test = split(window.dataset, 0.2, 7)
+        assert list(window.train_data.area) == list(expected_train.area)
+        assert list(window.test_data.area) == list(expected_test.area)
+
+    asyncio.run(exercise())
+
+
 def test_browse_uses_the_step_handler_and_window_request_handler(
     window: WorkflowWindow, dataset_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
