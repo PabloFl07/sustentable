@@ -156,6 +156,36 @@ def create_model(train: DataFrame, test: DataFrame, inputs: Sequence[Hashable], 
     return RegressionModel(inputs, output, train_metrics, test_metrics, estimator)
 
 
+def restore_model(
+    inputs: Sequence[Hashable],
+    output: Hashable,
+    coefficients: Sequence[float],
+    intercept: float,
+    train_metrics: Metrics,
+    test_metrics: Metrics,
+) -> RegressionModel:
+    """Rebuild a trained model from its parameters and metrics, such as the ones saved in a model file.
+
+    No data is needed: the restored model predicts exactly like the model the parameters come from, and it can be
+    saved again.
+
+    Raises:
+        ValueError: If no input is given, an input is repeated or is also the output, there is not exactly one
+            coefficient per input column, or a coefficient or the intercept is not a finite number.
+    """
+    inputs = tuple(inputs)
+    _check_selection(inputs, output)
+    if len(coefficients) != len(inputs):
+        raise ValueError("There must be exactly one coefficient per input column.")
+    values = np.array(coefficients, dtype=float)
+    if not np.isfinite(values).all() or not math.isfinite(intercept):
+        raise ValueError("The coefficients and the intercept must be finite numbers.")
+    estimator = LinearRegression()
+    # These are the fitted attributes that predicting and the ONNX conversion read.
+    estimator.coef_, estimator.intercept_, estimator.n_features_in_ = values, float(intercept), len(inputs)
+    return RegressionModel(inputs, output, train_metrics, test_metrics, estimator)
+
+
 def compute_metrics(actual: ArrayLike, predicted: ArrayLike) -> Metrics:
     """Compare predicted output values with the actual ones.
 

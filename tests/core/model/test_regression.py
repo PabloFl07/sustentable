@@ -12,11 +12,13 @@ from sustentable.core.model.regression import (
     UNDEFINED,
     FitPlot,
     FitPlot3D,
+    Metrics,
     compute_metrics,
     create_model,
     fit_plot,
     format_formula,
     format_metric,
+    restore_model,
 )
 
 NAN = math.nan
@@ -310,3 +312,44 @@ def test_multiple_fit_plot_compares_actual_and_predicted_values() -> None:
     values = np.concatenate([train.y, test.y, model.predict(train), model.predict(test)])
     (start_x, start_y), (end_x, end_y) = plot.line
     assert (start_x, start_y, end_x, end_y) == pytest.approx((values.min(), values.min(), values.max(), values.max()))
+
+
+# ----------------------------------------------------------------------------
+# Restoring a model from its parameters
+# ----------------------------------------------------------------------------
+
+
+def test_restored_model_predicts_exactly_like_the_original(plane_train: DataFrame, plane_test: DataFrame) -> None:
+    """Coefficients, intercept and metrics are enough to rebuild the model, without any of its data."""
+    original = create_model(plane_train, plane_test, ["a", "b"], "y")
+
+    restored = restore_model(
+        original.inputs, original.output, original.coefficients, original.intercept, original.train_metrics, original.test_metrics
+    )
+
+    assert restored == original, "Same columns and metrics."
+    assert (restored.coefficients, restored.intercept, restored.formula) == (original.coefficients, original.intercept, original.formula)
+    rows = DataFrame({"a": [-3.5, 0.0, 1e6], "b": [2.25, 0.0, -7.0]})
+    np.testing.assert_array_equal(restored.predict(rows), original.predict(rows))
+    with pytest.raises(ValueError, match="'b' is not available"):
+        restored.predict(rows[["a"]])
+
+
+@pytest.mark.parametrize(
+    ("inputs", "output", "coefficients", "intercept", "message"),
+    [
+        ([], "y", [], 0.0, "at least one input"),
+        (["a", "a"], "y", [1.0, 2.0], 0.0, "only be chosen once"),
+        (["a", "y"], "y", [1.0, 2.0], 0.0, "both an input and the output"),
+        (["a", "b"], "y", [1.0], 0.0, "exactly one coefficient per input"),
+        (["a"], "y", [NAN], 0.0, "finite numbers"),
+        (["a"], "y", [1.0], math.inf, "finite numbers"),
+    ],
+)
+def test_restoring_invalid_parameters_is_rejected(
+    inputs: list[str], output: str, coefficients: list[float], intercept: float, message: str
+) -> None:
+    """Parameters that no trained model could have are reported instead of giving a model that predicts nonsense."""
+    metrics = Metrics(r2=1.0, mse=0.0, rows=2)
+    with pytest.raises(ValueError, match=message):
+        restore_model(inputs, output, coefficients, intercept, metrics, metrics)
