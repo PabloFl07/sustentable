@@ -23,7 +23,7 @@ from sustentable.core.model.regression import create_model
 from sustentable.gui import dataset_window
 from sustentable.gui.controls.confirm_dialog import ConfirmDialog
 from sustentable.gui.controls.error_dialog import ErrorDialog
-from sustentable.gui.dataset_window import LOAD_ERROR_TITLE, LOADED_TITLE, SAVED_TITLE, DatasetWindow
+from sustentable.gui.dataset_window import LOAD_ERROR_TITLE, SAVED_TITLE, DatasetWindow
 
 # energy = 2 * area - 3 * occupants + 50 exactly, so the formula and the predictions are known.
 AREA = [3, 7, 1, 9, 4, 8, 2, 6, 5, 0]
@@ -77,7 +77,7 @@ def dialogs(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock, AsyncMock]:
     errors, notices, confirm = Mock(), Mock(), AsyncMock(return_value=True)
 
     def show(dialog: ErrorDialog, *args: object, **kwargs: object) -> None:
-        (notices if kwargs.get("title") in (LOADED_TITLE, SAVED_TITLE) else errors)(*args, **kwargs)
+        (notices if kwargs.get("title") == SAVED_TITLE else errors)(*args, **kwargs)
 
     monkeypatch.setattr(ErrorDialog, "show_error", show)
     monkeypatch.setattr(ConfirmDialog, "ask", confirm)
@@ -158,7 +158,7 @@ async def _open_dataset_step(window: ModelWindow) -> None:
 def test_loaded_model_opens_in_the_model_step_without_the_data_sections(
     window: ModelWindow, model_file: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
 ) -> None:
-    """Formula, columns, metrics and description are shown for consultation, with a confirmation message and no chart."""
+    """Formula, columns, metrics and description are shown for consultation, the status confirms the load, and there is no chart."""
     errors, notices, confirm = dialogs
     chooser = _choose(monkeypatch, model_file)
 
@@ -166,9 +166,8 @@ def test_loaded_model_opens_in_the_model_step_without_the_data_sections(
 
     chooser.assert_awaited_once_with(title="Open model", extensions=(".onnx",))
     errors.assert_not_called()
+    notices.assert_not_called()
     confirm.assert_not_awaited()
-    notices.assert_called_once()
-    assert notices.call_args.kwargs == {"title": LOADED_TITLE} and str(model_file) in notices.call_args.args[0]
     assert _showing_loaded_model(window) and window.wizard.selected_step is window.model_step
     step = window.model_step
     assert window.model is step.model is window.predict_step.model is not None
@@ -292,7 +291,9 @@ def test_cancelled_or_failed_load_keeps_the_previous_state_and_allows_another_tr
         assert window.model_step.description.text == "Predice la energía."
         await window.click(window.load_model_button)
         assert window.model_step.description.text == "Otro modelo" and window.model is not loaded
-        assert notices.call_count == 2
+        assert window.model_step.status.text == "Model loaded from simple.onnx"
+        assert errors.call_count == 2 * (outcome != "cancelled"), "Only the two failed attempts show a dialog."
+        notices.assert_not_called()
 
     asyncio.run(exercise())
 

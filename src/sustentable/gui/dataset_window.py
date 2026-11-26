@@ -46,7 +46,6 @@ from sustentable.gui.steps.split_step import SplitStep
 OPEN_ERROR_TITLE = "Unable to open dataset"
 MODEL_ERROR_TITLE = "Unable to create model"
 LOAD_ERROR_TITLE = "Unable to load model"
-LOADED_TITLE = "Model loaded"
 SAVE_ERROR_TITLE = "Unable to save model"
 SAVED_TITLE = "Model saved"
 NO_DATA_NOTE = (
@@ -460,7 +459,6 @@ class DatasetWindow(App):
         # Setting the index skips the linear checks, which would still require the steps that prepare data.
         self.wizard.selected_index = self.wizard.steps.index(self.model_step)
         self._refresh()
-        self.notice_dialog.show_error(f"Model loaded from:\n{saved.path}", title=LOADED_TITLE)
 
     async def _may_discard_model(self) -> bool:
         """Ask before discarding a model with unsaved changes; return whether the current model may be discarded."""
