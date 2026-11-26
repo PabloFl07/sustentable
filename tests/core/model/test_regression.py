@@ -8,7 +8,16 @@ import pandas as pd
 import pytest
 from pandas import DataFrame
 
-from sustentable.core.model.regression import UNDEFINED, compute_metrics, create_model, fit_plot, format_formula, format_metric
+from sustentable.core.model.regression import (
+    UNDEFINED,
+    FitPlot,
+    FitPlot3D,
+    compute_metrics,
+    create_model,
+    fit_plot,
+    format_formula,
+    format_metric,
+)
 
 NAN = math.nan
 
@@ -265,17 +274,39 @@ def test_simple_fit_plot_shows_both_subsets_and_the_regression_line() -> None:
     assert end == pytest.approx((6.0, 13.0))
 
 
-def test_multiple_fit_plot_compares_actual_and_predicted_values(plane_train: DataFrame, plane_test: DataFrame) -> None:
-    """Actual values are on the x axis, predictions on the y axis, and the line marks where both are equal."""
+def test_two_input_fit_plot_shows_both_subsets_and_the_regression_plane(plane_train: DataFrame, plane_test: DataFrame) -> None:
+    """The two inputs and the output form the axes, and the plane covers both subsets."""
     model = create_model(plane_train, plane_test, ["a", "b"], "y")
 
     plot = fit_plot(model, plane_train, plane_test)
 
-    assert (plot.x_label, plot.y_label, plot.line_label) == ("Actual value (y)", "Predicted value (y)", "Predicted = actual")
+    assert type(plot) is FitPlot3D
+    assert (plot.x_label, plot.y_label, plot.z_label, plot.plane_label) == ("a", "b", "y", "Regression plane")
     for points, subset in ((plot.train_points, plane_train), (plot.test_points, plane_test)):
+        expected = tuple((float(row.a), float(row.b), float(row.y)) for row in subset.itertuples(index=False))
+        assert points == expected
+    assert all(type(value) is float for point in (*plot.train_points, *plot.test_points, *plot.plane) for value in point)
+    assert [(x, y) for x, y, _ in plot.plane] == [(0.0, 0.0), (8.0, 0.0), (8.0, 8.0), (0.0, 8.0)]
+    for a, b, height in plot.plane:
+        assert height == pytest.approx(3 * a - 2 * b + 5)
+    # The test rows sit three units above the plane, so the chart keeps the actual output.
+    assert plot.test_points[0][2] == pytest.approx(3 * plot.test_points[0][0] - 2 * plot.test_points[0][1] + 8)
+
+
+def test_multiple_fit_plot_compares_actual_and_predicted_values() -> None:
+    """With three or more inputs, actual values are on the x axis and predictions on the y axis."""
+    train = DataFrame({"a": [0, 1, 2, 3], "b": [0, 1, 0, 1], "c": [1, 0, 1, 0], "y": [1, 2, 3, 4]})
+    test = DataFrame({"a": [4, 5], "b": [1, 0], "c": [0, 1], "y": [9, 6]})
+    model = create_model(train, test, ["a", "b", "c"], "y")
+
+    plot = fit_plot(model, train, test)
+
+    assert type(plot) is FitPlot
+    assert (plot.x_label, plot.y_label, plot.line_label) == ("Actual value (y)", "Predicted value (y)", "Predicted = actual")
+    for points, subset in ((plot.train_points, train), (plot.test_points, test)):
         actual, predicted = zip(*points, strict=True)
         assert list(actual) == subset.y.tolist()
         assert predicted == pytest.approx(model.predict(subset))
-    values = np.concatenate([plane_train.y, plane_test.y, model.predict(plane_train), model.predict(plane_test)])
+    values = np.concatenate([train.y, test.y, model.predict(train), model.predict(test)])
     (start_x, start_y), (end_x, end_y) = plot.line
     assert (start_x, start_y, end_x, end_y) == pytest.approx((values.min(), values.min(), values.max(), values.max()))

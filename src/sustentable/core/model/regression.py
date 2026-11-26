@@ -22,6 +22,7 @@ DECIMALS = 4
 UNDEFINED = "n/a"
 
 type Point = tuple[float, float]
+type Point3 = tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -83,10 +84,10 @@ class RegressionModel:
 
 @dataclass(frozen=True)
 class FitPlot:
-    """Points and line of the fit chart, in data units, and the title of each axis.
+    """Points and line of a flat fit chart, in data units, and the title of each axis.
 
     In a simple regression the x axis is the input column, the y axis is the output column and the line is the
-    regression line. In a multiple regression the x axis is the actual output, the y axis is the predicted output and
+    regression line. With three or more inputs the x axis is the actual output, the y axis is the predicted output and
     the line marks where both are equal: the closer the points are to it, the better the model predicts.
     """
 
@@ -96,6 +97,25 @@ class FitPlot:
     train_points: tuple[Point, ...]
     test_points: tuple[Point, ...]
     line: tuple[Point, Point]
+
+
+@dataclass(frozen=True)
+class FitPlot3D:
+    """Points and regression plane of a model with two inputs, in data units.
+
+    ``x_label`` and ``y_label`` name the input columns and ``z_label`` the output. ``train_points`` and
+    ``test_points`` are ``(first input, second input, output)``. ``plane`` is the rectangle of the regression plane
+    over the input ranges of both subsets, with corners ``(x low, y low)``, ``(x high, y low)``, ``(x high, y high)``
+    and ``(x low, y high)``.
+    """
+
+    x_label: str
+    y_label: str
+    z_label: str
+    plane_label: str
+    train_points: tuple[Point3, ...]
+    test_points: tuple[Point3, ...]
+    plane: tuple[Point3, Point3, Point3, Point3]
 
 
 def create_model(train: DataFrame, test: DataFrame, inputs: Sequence[Hashable], output: Hashable) -> RegressionModel:
@@ -193,8 +213,12 @@ def format_metric(value: float, decimals: int = DECIMALS) -> str:
     return text.removeprefix("-") if float(text.replace(",", "")) == 0 else text
 
 
-def fit_plot(model: RegressionModel, train: DataFrame, test: DataFrame) -> FitPlot:
+def fit_plot(model: RegressionModel, train: DataFrame, test: DataFrame) -> FitPlot | FitPlot3D:
     """Prepare the chart that compares ``model`` with the training and test subsets.
+
+    A simple regression returns the input, the output and the regression line. Two inputs return a
+    :class:`FitPlot3D`: both inputs, the output and the regression plane. Three or more inputs return each
+    prediction against the actual output, with the line where the two are equal.
 
     Raises:
         ValueError: If a subset lacks a column of the model or has values the model cannot use.
@@ -219,6 +243,10 @@ def fit_plot(model: RegressionModel, train: DataFrame, test: DataFrame) -> FitPl
             line=((low, start), (high, end)),
         )
 
+    # Two inputs are drawn in three dimensions, with the output as the height of the regression plane.
+    if len(model.inputs) == 2:
+        return _plane_plot(model, x_train, y_train, x_test, y_test)
+
     predicted_train, predicted_test = model.estimator.predict(x_train), model.estimator.predict(x_test)
     values = np.concatenate([y_train, y_test, predicted_train, predicted_test])
     low, high = float(values.min()), float(values.max())
@@ -229,6 +257,31 @@ def fit_plot(model: RegressionModel, train: DataFrame, test: DataFrame) -> FitPl
         train_points=_points(y_train, predicted_train),
         test_points=_points(y_test, predicted_test),
         line=((low, low), (high, high)),
+    )
+
+
+def _plane_plot(
+    model: RegressionModel,
+    x_train: NDArray[np.float64],
+    y_train: NDArray[np.float64],
+    x_test: NDArray[np.float64],
+    y_test: NDArray[np.float64],
+) -> FitPlot3D:
+    """Build the plane that covers the input ranges of both subsets."""
+    x_low = float(min(x_train[:, 0].min(), x_test[:, 0].min()))
+    x_high = float(max(x_train[:, 0].max(), x_test[:, 0].max()))
+    y_low = float(min(x_train[:, 1].min(), x_test[:, 1].min()))
+    y_high = float(max(x_train[:, 1].max(), x_test[:, 1].max()))
+    corners = np.array([[x_low, y_low], [x_high, y_low], [x_high, y_high], [x_low, y_high]])
+    low_low, high_low, high_high, low_high = (float(value) for value in model.estimator.predict(corners))
+    return FitPlot3D(
+        x_label=str(model.inputs[0]),
+        y_label=str(model.inputs[1]),
+        z_label=str(model.output),
+        plane_label="Regression plane",
+        train_points=_points3(x_train[:, 0], x_train[:, 1], y_train),
+        test_points=_points3(x_test[:, 0], x_test[:, 1], y_test),
+        plane=((x_low, y_low, low_low), (x_high, y_low, high_low), (x_high, y_high, high_high), (x_low, y_high, low_high)),
     )
 
 
@@ -281,3 +334,9 @@ def _inputs_and_output(
 def _points(x: NDArray[np.float64], y: NDArray[np.float64]) -> tuple[Point, ...]:
     """Pair the x and y values as plain Python floats."""
     return tuple(zip(x.tolist(), y.tolist(), strict=True))
+
+
+def _points3(x: NDArray[np.float64], y: NDArray[np.float64], z: NDArray[np.float64]) -> tuple[Point3, ...]:
+    """Group the three coordinates as plain Python floats."""
+    rows = zip(x.tolist(), y.tolist(), z.tolist(), strict=True)
+    return tuple((float(a), float(b), float(c)) for a, b, c in rows)

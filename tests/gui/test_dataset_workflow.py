@@ -659,6 +659,7 @@ def test_simple_model_shows_its_formula_metrics_and_fit(window: WorkflowWindow, 
 
         assert window.fit_panel.visible and not window.preview.visible
         chart = window.fit_chart
+        assert chart.plane is None
         assert (chart.x_label, chart.y_label) == ("area", "energy")
         training, testing = chart.point_series
         assert (training.title, testing.title) == ("Training", "Test")
@@ -692,7 +693,8 @@ def test_new_model_replaces_the_previous_one_and_data_changes_discard_it(window:
 
         await window.request_step(1)
         await window.choose_columns((0, 1))
-        assert window.model is None and not window.fit_chart.point_series and not window.fit_panel.visible
+        assert window.model is None and not window.fit_chart.point_series and window.fit_chart.plane is None
+        assert not window.fit_panel.visible
         assert step.formula.text == "Create the model to see its formula."
         assert [label.text for label in (*step.r2_values, *step.mse_values)] == ["—"] * 4
         assert not step.completed and not step.create_button.enabled
@@ -703,18 +705,20 @@ def test_new_model_replaces_the_previous_one_and_data_changes_discard_it(window:
         assert step.formula.text == "energy = 2.0000 * area - 3.0000 * occupants + 50.0000"
         assert step.formula_caption.text == "FORMULA · MULTIPLE REGRESSION"
         assert [label.text for label in step.r2_values] == ["1.0000", "1.0000"]
+        assert window.fit_panel.visible
         chart = window.fit_chart
-        assert (chart.x_label, chart.y_label) == ("Actual value (energy)", "Predicted value (energy)")
-        assert [line.title for line in chart.line_series] == ["Predicted = actual"]
+        assert (chart.x_label, chart.y_label, chart.z_label) == ("area", "occupants", "energy")
+        assert chart.plane is not None and chart.plane.title == "Regression plane" and not chart.line_series
         training, testing = chart.point_series
+        assert (training.shape, testing.shape) == ("circle", "square")
         assert (len(training.points), len(testing.points)) == (8, 2)
-        for actual, predicted in (*training.points, *testing.points):
-            assert predicted == pytest.approx(actual)
+        for area, occupants, energy in (*training.points, *testing.points, *chart.plane.corners):
+            assert energy == pytest.approx(2 * area - 3 * occupants + 50)
 
         await window.request_step(2)
         window.split_step.share.value = 30
         await window.settle()
-        assert window.model is None and not window.fit_chart.point_series
+        assert window.model is None and not window.fit_chart.point_series and window.fit_chart.plane is None
 
     asyncio.run(exercise())
 

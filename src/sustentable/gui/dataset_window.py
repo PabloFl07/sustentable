@@ -25,14 +25,14 @@ from pysual.errors import LifecycleError
 from sustentable.core.io.exceptions import DataImportError
 from sustentable.core.io.export_model import MODEL_EXTENSION, ModelExportError, export_model, model_files
 from sustentable.core.io.readers import SUPPORTED_EXTENSIONS, get_reader
-from sustentable.core.model.regression import FitPlot, RegressionModel, create_model, fit_plot
+from sustentable.core.model.regression import FitPlot, FitPlot3D, RegressionModel, create_model, fit_plot
 from sustentable.core.processing.data_processing import process_nan_values
 from sustentable.gui.controls.action_tile import with_action_tile
 from sustentable.gui.controls.confirm_dialog import ConfirmDialog
 from sustentable.gui.controls.error_dialog import ErrorDialog
 from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
-from sustentable.gui.controls.scatter_chart import LineSeries, PointSeries, ScatterChart
+from sustentable.gui.controls.scatter_chart import LineSeries, PlaneSeries, PointSeries, PointSeries3D, ScatterChart
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
 from sustentable.gui.start_screen import StartScreen
 from sustentable.gui.steps.columns_step import ColumnsStep
@@ -67,6 +67,7 @@ class DatasetWindow(App):
     After preprocessing is applied the shared table shows those subsets; it shows the loaded dataset again
     once the result is discarded. ``model`` is the model created from ``preprocessed_data``, kept for saving and
     predictions; while the model step is selected, its fit chart takes the place of the table.
+    A model with two inputs draws that fit as a plane that can be rotated, panned and zoomed; the other models draw a flat chart.
     """
 
     dataset: DataFrame | None
@@ -178,7 +179,8 @@ class DatasetWindow(App):
         self.model_step.show_model(model)
         self.predict_step.show_model(model)
         kind = "simple" if model.is_simple else "multiple"
-        self.fit_label.text = f"{self._dataset_name} · {kind} regression fit · training {len(train):,} + test {len(test):,} rows"
+        view = "plane" if self.fit_chart.plane is not None else "fit"
+        self.fit_label.text = f"{self._dataset_name} · {kind} regression {view} · training {len(train):,} + test {len(test):,} rows"
         self._refresh()
 
     async def model_step_on_save_model(self, event: UiEvent) -> None:
@@ -228,13 +230,26 @@ class DatasetWindow(App):
             self._refresh()
         self.notice_dialog.show_error(f"Model saved to:\n{files.model}", title=SAVED_TITLE)
 
-    def _show_fit(self, plot: FitPlot) -> None:
-        """Draw both subsets and the model line, keeping the previous chart if the data cannot be drawn."""
+    def _show_fit(self, plot: FitPlot | FitPlot3D) -> None:
+        """Draw both subsets and the model, keeping the previous chart if the data cannot be drawn.
+
+        Two inputs use the rotatable plane. Every other model uses the flat chart.
+        """
+        if isinstance(plot, FitPlot3D):
+            self.fit_chart.set_volume(
+                (
+                    PointSeries3D("Training", plot.train_points, TRAIN_COLOR, "circle"),
+                    PointSeries3D("Test", plot.test_points, TEST_COLOR, "square"),
+                ),
+                PlaneSeries(plot.plane_label, plot.plane, LINE_COLOR),
+            )
+            self.fit_chart.update(x_label=plot.x_label, y_label=plot.y_label, z_label=plot.z_label)
+            return
         self.fit_chart.set_data(
             (PointSeries("Training", plot.train_points, TRAIN_COLOR, "circle"), PointSeries("Test", plot.test_points, TEST_COLOR, "square")),
             (LineSeries(plot.line_label, *plot.line, LINE_COLOR),),
         )
-        self.fit_chart.update(x_label=plot.x_label, y_label=plot.y_label)
+        self.fit_chart.update(x_label=plot.x_label, y_label=plot.y_label, z_label="")
 
     async def _show_raw_preview(self) -> None:
         """Reload the loaded dataset into the table when it still shows a discarded preprocessing result."""
@@ -444,7 +459,7 @@ def _read_dataset(path: str | Path) -> tuple[str, DataFrame]:
     return str(Path(path).resolve()), get_reader(path).read()
 
 
-def _train_model(train: DataFrame, test: DataFrame, inputs: list[Hashable], output: Hashable) -> tuple[RegressionModel, FitPlot]:
+def _train_model(train: DataFrame, test: DataFrame, inputs: list[Hashable], output: Hashable) -> tuple[RegressionModel, FitPlot | FitPlot3D]:
     """Create the model and its chart data in a worker without accessing UI controls."""
     model = create_model(train, test, inputs, output)
     return model, fit_plot(model, train, test)
