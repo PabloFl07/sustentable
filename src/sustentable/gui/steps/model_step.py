@@ -11,7 +11,7 @@ STEP_HEIGHT = 176
 _READY = "Ready. The model is fitted with the training subset only and evaluated on both subsets."
 _NO_FORMULA = "Create the model to see its formula."
 _NO_VALUE = "—"
-_ACTIONS_WIDTH = 200
+_ACTIONS_WIDTH = 230
 _SAVE_WIDTH = 260
 _NAME_WIDTH = 200
 _VALUE_WIDTH = 112
@@ -54,11 +54,12 @@ class ModelStep(Step):
         self._written = False
         box, muted = tokens.raised, tokens.muted
 
-        actions = Container(parent=self, layout="stack", spacing=8, width=_ACTIONS_WIDTH)
-        self.create_button = Button(parent=actions, text="Create model", width=_ACTIONS_WIDTH, height=36)
-        self.columns_caption = Label(parent=actions, text="COLUMNS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        self.columns_text = Label(parent=actions, word_wrap=True)
-        self.status = Label(parent=actions, word_wrap=True, flex=1)
+        actions = Container(parent=self, layout="stack", spacing=4, width=_ACTIONS_WIDTH)
+        Label(parent=actions, text="MODEL", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        actions_box = Container(parent=actions, layout="stack", padding=10, spacing=8, background=box, flex=1)
+        self.create_button = Button(parent=actions_box, text="Create model", height=36)
+        self.columns_text = Label(parent=actions_box, word_wrap=True, background=box)
+        self.status = Label(parent=actions_box, word_wrap=True, background=box, flex=1)
 
         formula = Container(parent=self, layout="stack", spacing=4, flex=1)
         self.formula_caption = Label(parent=formula, height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
@@ -78,7 +79,7 @@ class ModelStep(Step):
         self.description = TextBox(
             parent=save, multiline=True, word_wrap=True, placeholder="Optional: what the model predicts and how to use it.", flex=1
         )
-        self.save_button = Button(parent=save, text="Save model…", width=_SAVE_WIDTH, height=32)
+        self.save_button = Button(parent=save, text="Save model", width=_SAVE_WIDTH, height=32)
         self._refresh()
 
     @property
@@ -152,7 +153,7 @@ class ModelStep(Step):
 
     def _refresh(self) -> None:
         self.create_button.visible = not self._loaded
-        self.columns_caption.visible = self.columns_text.visible = self._loaded
+        self.columns_text.visible = self._loaded
         self.create_button.enabled = not self._prerequisite
         model = self._model
         self.save_button.enabled = model is not None
