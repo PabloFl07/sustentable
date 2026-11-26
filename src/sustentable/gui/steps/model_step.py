@@ -146,6 +146,7 @@ class ModelStep(Step):
         self.save_button.enabled = model is not None
         if model is None:
             self.status.text = (self._prerequisite or _READY) if self._creatable else ""
+            self.status.tooltip = ""
             self.columns_text.text = ""
             self.formula_caption.text = "FORMULA"
             self.formula.text = _NO_FORMULA
@@ -157,9 +158,12 @@ class ModelStep(Step):
         if self._saved_path is None:
             self.status.text = f"Model created successfully. {kind} regression trained on {train.rows:,} rows and tested on {test.rows:,} rows."
         else:
-            self.status.text = f"Model {'loaded from' if self._loaded else 'saved to'} {self._saved_path}"
+            # Next to the columns there is only room for the file name; the tooltip keeps the full path.
+            place = self._saved_path if self._creatable else self._saved_path.name
+            self.status.text = f"Model {'loaded from' if self._loaded else 'saved to'} {place}"
             if self.has_unsaved_changes:
                 self.status.text += ". The description has unsaved changes."
+        self.status.tooltip = "" if self._saved_path is None else str(self._saved_path)
         self.columns_text.text = f"Output (Y): {model.output}\nInputs (X): {', '.join(str(column) for column in model.inputs)}"
         self.formula_caption.text = f"FORMULA · {kind.upper()} REGRESSION"
         self.formula.text = model.formula

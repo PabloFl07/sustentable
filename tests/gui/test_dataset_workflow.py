@@ -192,15 +192,17 @@ def test_split_edits_clear_results_and_empty_subsets_block_confirmation(
 def test_replacement_resets_workflow_but_failed_load_keeps_confirmed_results(
     window: WorkflowWindow, dataset_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only a successful import clears the choices, split, model and workflow position."""
-    errors = Mock()
+    """Only a successful import clears the choices, split, model and workflow position; the unsaved model is confirmed first."""
+    errors, confirm = Mock(), AsyncMock(return_value=True)
     monkeypatch.setattr(ErrorDialog, "show_error", errors)
+    monkeypatch.setattr(ConfirmDialog, "ask", confirm)
 
     async def exercise() -> None:
         await _confirmed_split(window, dataset_path)
         await window.create_model()
         train, test, selected, model = window.train_data, window.test_data, window.selection, window.model
         await window.show_dataset(tmp_path / "missing.csv")
+        assert "has not been saved" in confirm.call_args.args[0]
         assert errors.call_count == 1
         assert window.wizard.selected_index == 3
         assert window.train_data is train and window.test_data is test and window.selection == selected

@@ -1,4 +1,4 @@
-"""Tests for the start screen: the window opens on it, and its two choices lead to the dataset workflow or a notice.
+"""Tests for the start screen: the window opens on it, and its two choices open the dataset or the model dialog.
 
 File dialogs and error presentation are mocked; tile clicks travel through Pysual's real event dispatcher.
 """
@@ -17,7 +17,7 @@ from pysual.events import Dispatcher
 from sustentable.core.io.readers import SUPPORTED_EXTENSIONS
 from sustentable.gui.controls.action_tile import ActionTile
 from sustentable.gui.controls.error_dialog import ErrorDialog
-from sustentable.gui.dataset_window import MODEL_LOADING_UNAVAILABLE, OPEN_ERROR_TITLE, DatasetWindow
+from sustentable.gui.dataset_window import OPEN_ERROR_TITLE, DatasetWindow
 
 
 class StartWindow(DatasetWindow):
@@ -53,9 +53,9 @@ def errors(monkeypatch: pytest.MonkeyPatch) -> Mock:
 
 
 def _showing_start(window: StartWindow) -> bool:
-    """Whether the start screen is shown and every workflow section is hidden."""
-    workflow = (window.wizard, window.preview, window.fit_panel, window.footer, window.feedback)
-    return window.start_screen.visible and not any(control.visible for control in workflow)
+    """Whether the start screen is shown and every workflow section and the model view are hidden."""
+    others = (window.wizard, window.preview, window.fit_panel, window.footer, window.feedback, window.model_view)
+    return window.start_screen.visible and not any(control.visible for control in others)
 
 
 def test_the_window_opens_on_the_start_screen(window: StartWindow) -> None:
@@ -65,7 +65,6 @@ def test_the_window_opens_on_the_start_screen(window: StartWindow) -> None:
     assert _showing_start(window)
     assert (screen.model_tile.text, screen.dataset_tile.text) == ("Load model", "Load dataset")
     assert screen.model_tile.effective_enabled and screen.dataset_tile.effective_enabled
-    assert screen.notice.text == ""
     assert window.check_handlers(include_unbound=True) == ()
 
 
@@ -120,16 +119,17 @@ def test_cancelled_or_failed_dataset_keeps_the_start_screen_and_allows_another_t
     asyncio.run(exercise())
 
 
-def test_load_model_explains_that_saved_models_cannot_be_loaded_yet(window: StartWindow, monkeypatch: pytest.MonkeyPatch, errors: Mock) -> None:
-    """Until saved models can be read, the choice opens no dialog and explains why on the start screen."""
-    chooser = AsyncMock()
+def test_load_model_opens_the_model_dialog_and_cancelling_keeps_the_start_screen(
+    window: StartWindow, monkeypatch: pytest.MonkeyPatch, errors: Mock
+) -> None:
+    """The dialog only offers saved models, and closing it without choosing one is not an error."""
+    chooser = AsyncMock(return_value=None)
     monkeypatch.setattr(DatasetWindow, "choose_path", chooser)
 
     asyncio.run(window.click(window.start_screen.model_tile))
 
-    chooser.assert_not_awaited()
+    chooser.assert_awaited_once_with(title="Open model", extensions=(".onnx",))
     errors.assert_not_called()
-    assert window.start_screen.notice.text == MODEL_LOADING_UNAVAILABLE
     assert _showing_start(window)
 
 
@@ -159,7 +159,7 @@ def test_both_choices_are_disabled_while_a_dataset_loads(
             assert not screen.model_tile.effective_enabled and not screen.dataset_tile.effective_enabled
             await window.start_screen_on_load_model(UiEvent(source=screen))
             await window.start_screen_on_load_dataset(UiEvent(source=screen))
-            assert screen.notice.text == "" and chooser.await_count == 1
+            assert chooser.await_count == 1
         finally:
             release.set()
             await pending

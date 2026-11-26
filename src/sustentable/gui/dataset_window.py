@@ -24,6 +24,7 @@ from pysual.errors import LifecycleError
 
 from sustentable.core.io.exceptions import DataImportError
 from sustentable.core.io.export_model import MODEL_EXTENSION, ModelExportError, export_model, model_files
+from sustentable.core.io.import_model import ModelImportError, import_model
 from sustentable.core.io.readers import SUPPORTED_EXTENSIONS, get_reader
 from sustentable.core.model.regression import FitPlot, FitPlot3D, RegressionModel, create_model, fit_plot
 from sustentable.core.processing.data_processing import process_nan_values
@@ -34,6 +35,7 @@ from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.scatter_chart import LineSeries, PlaneSeries, PointSeries, PointSeries3D, ScatterChart
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
+from sustentable.gui.model_view import ModelView
 from sustentable.gui.start_screen import StartScreen
 from sustentable.gui.steps.columns_step import ColumnsStep
 from sustentable.gui.steps.dataset_step import DatasetStep
@@ -44,7 +46,8 @@ from sustentable.gui.steps.split_step import SplitStep
 
 OPEN_ERROR_TITLE = "Unable to open dataset"
 MODEL_ERROR_TITLE = "Unable to create model"
-MODEL_LOADING_UNAVAILABLE = "Loading a saved model is not available yet. Load a dataset to create a new model."
+LOAD_ERROR_TITLE = "Unable to load model"
+LOADED_TITLE = "Model loaded"
 SAVE_ERROR_TITLE = "Unable to save model"
 SAVED_TITLE = "Model saved"
 # Characters that cannot appear in a file name on Windows, macOS or Linux.
@@ -58,8 +61,9 @@ LINE_COLOR = "#34d399"
 class DatasetWindow(App):
     """Load data, confirm regression columns and retain the confirmed train/test subsets and model.
 
-    The window opens on a start screen that offers to load a saved model or a dataset; the first dataset that
-    loads replaces it with the workflow.
+    The window opens on a start screen that offers to load a saved model or a dataset. A dataset shows the guided
+    workflow; a saved model shows ``model_view`` instead, without any of the sections that work with data. Loading one
+    discards the other, and a model with unsaved changes is only discarded after the user confirms it.
 
     ``dataset`` is the last successfully loaded frame. ``selection``, ``train_data`` and ``test_data``
     hold confirmed results, or ``None`` when a prerequisite has changed. ``preprocessed_data`` holds the
@@ -88,6 +92,7 @@ class DatasetWindow(App):
         self._dataset_caption = "Dataset preview"
         self._showing_processed = False
         self.start_screen = StartScreen(parent=self, tokens=self.theme.tokens, flex=1)
+        self.model_view = ModelView(parent=self, tokens=self.theme.tokens, flex=1)
         self.wizard = Stepper(parent=self, orientation="horizontal", linear=True, header_height=48)
         self.dataset_step = DatasetStep(parent=self.wizard)
         self.columns_step = ColumnsStep(parent=self.wizard, tokens=self.theme.tokens)
@@ -107,6 +112,7 @@ class DatasetWindow(App):
         self.footer = Container(parent=self, layout="dock", height=36, spacing=8)
         self.advance = Button(parent=self.footer, text="Continue", dock="right", width=176)
         self.back = SidebarButton(parent=self.footer, text="Back", dock="right", width=80)
+        self.load_model_button = SidebarButton(parent=self.footer, text="Load saved model…", dock="left", width=180)
         self.feedback = Label(parent=self, height=24)
         self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
         self.notice_dialog = ErrorDialog(title=SAVED_TITLE, width=760, height=340)
@@ -308,7 +314,9 @@ class DatasetWindow(App):
         self.wizard.next()
 
     def _refresh(self) -> None:
-        self.wizard.enabled = self.dataset_step.open_dataset.enabled = self.start_screen.enabled = not self._busy_message
+        idle = not self._busy_message
+        self.wizard.enabled = self.dataset_step.open_dataset.enabled = self.load_model_button.enabled = idle
+        self.start_screen.enabled = self.model_view.enabled = idle
         self.back.enabled = not self._busy_message and self.wizard.selected_index > 0
         self.advance.text = "Continue"
         self.feedback.text = ""
@@ -345,7 +353,10 @@ class DatasetWindow(App):
             self.feedback.text = self._busy_message
         self.advance.enabled = not self._busy_message and not problem and self.wizard.selected_index < len(self.wizard.steps) - 1
         self.model_step.set_prerequisite(self._model_prerequisite())
-        working = not self.start_screen.visible
+        loaded = self.model_view.model is not None
+        starting = self.dataset is None and not loaded
+        working = not starting and not loaded
+        self.start_screen.visible, self.model_view.visible = starting, loaded
         self.wizard.visible = self.footer.visible = self.feedback.visible = working
         showing_fit = working and self.model is not None and self.wizard.selected_step is self.model_step
         self.preview.visible, self.fit_panel.visible = working and not showing_fit, showing_fit
@@ -395,9 +406,79 @@ class DatasetWindow(App):
         self.fit_chart.clear()
 
     async def start_screen_on_load_model(self, event: UiEvent) -> None:
-        """Explain on the start screen that saved models cannot be loaded yet, without opening a dialog."""
-        if not self._busy_message:
-            self.start_screen.notice.text = MODEL_LOADING_UNAVAILABLE
+        """Choose a saved model to start with; the start screen stays when the dialog is cancelled or the load fails."""
+        await self._browse_model()
+
+    async def load_model_button_on_click(self, event: ClickEvent) -> None:
+        """Choose a saved model to replace the dataset workflow."""
+        await self._browse_model()
+
+    async def model_view_on_load_model(self, event: UiEvent) -> None:
+        """Choose another saved model to replace the one shown."""
+        await self._browse_model()
+
+    async def model_view_on_load_dataset(self, event: UiEvent) -> None:
+        """Choose a dataset to replace the model shown and create a new model."""
+        await self._browse_dataset()
+
+    async def model_view_on_save_model(self, event: UiEvent) -> None:
+        """Save the loaded model again with its description."""
+        await self._save_model(self.model_view.summary)
+
+    async def _browse_model(self) -> None:
+        """Open the model dialog and load the chosen file; cancelling or a dialog error changes nothing."""
+        if self._busy_message:
+            return
+        try:
+            chosen = await self.choose_path(title="Open model", extensions=(MODEL_EXTENSION,))
+        except (CapabilityError, OSError, ValueError) as error:
+            self.error_dialog.show_error(str(error), title=LOAD_ERROR_TITLE)
+            return
+        except LifecycleError:
+            return
+        if chosen is not None:
+            await self.show_saved_model(chosen)
+
+    async def show_saved_model(self, path: str | Path) -> None:
+        """Load a saved model off the UI thread and show it instead of any dataset; keep the previous state if it fails.
+
+        A current model with unsaved changes is only replaced after the user confirms it. Overlapping requests are
+        ignored, and cancelling the wait discards the worker's eventual result.
+        """
+        if self._busy_message or not await self._may_discard_model():
+            return
+        try:
+            async with self._busy("Loading model…"):
+                saved = await asyncio.to_thread(import_model, path)
+        except ModelImportError as error:
+            self.error_dialog.show_error(str(error), title=LOAD_ERROR_TITLE)
+            return
+        self._discard_dataset()
+        self.model_view.show_model(saved)
+        self._refresh()
+        self.notice_dialog.show_error(f"Model loaded from:\n{saved.path}", title=LOADED_TITLE)
+
+    async def _may_discard_model(self) -> bool:
+        """Ask before discarding a model with unsaved changes; return whether the current model may be discarded."""
+        panel = next((panel for panel in (self.model_step, self.model_view.summary) if panel.has_unsaved_changes), None)
+        if panel is None:
+            return True
+        if panel.saved_path is None:
+            reason = "The current model has not been saved, so it will be lost if you continue."
+        else:
+            reason = "The description of the current model has changes that have not been saved. They will be lost if you continue."
+        return await self.confirm_dialog.ask(reason, title="Discard unsaved changes?", confirm_text="Discard changes", cancel_text="Keep model")
+
+    def _discard_dataset(self) -> None:
+        """Forget the dataset and everything prepared from it, which a loaded model replaces."""
+        self.dataset = None
+        self._clear_selection()
+        self.columns_step.load_columns([])
+        self.dataset_step.path_text.text = ""
+        self._dataset_name, self._dataset_caption, self._showing_processed = "", "Dataset preview", False
+        self.preview_label.text = self._dataset_caption
+        self.dataset_grid.load_dataframe(DataFrame())
+        self.wizard.reset()
 
     async def start_screen_on_load_dataset(self, event: UiEvent) -> None:
         """Choose a dataset to create a new model; the start screen stays when the dialog is cancelled or the load fails."""
@@ -422,12 +503,13 @@ class DatasetWindow(App):
             await self.show_dataset(chosen)
 
     async def show_dataset(self, path: str | Path) -> None:
-        """Read and convert off the UI thread; retain the previous workflow, or the start screen, if either stage fails.
+        """Read and convert off the UI thread; retain the previous workflow, model or start screen if either stage fails.
 
-        A successful load leaves the start screen for the workflow. Overlapping requests are ignored.
-        Cancelling the wait discards the worker's eventual result.
+        A successful load shows the workflow and discards a loaded model. A current model with unsaved changes is only
+        replaced after the user confirms it. Overlapping requests are ignored. Cancelling the wait discards the
+        worker's eventual result.
         """
-        if self._busy_message:
+        if self._busy_message or not await self._may_discard_model():
             return
         async with self._busy("Loading dataset…"):
             try:
@@ -442,7 +524,7 @@ class DatasetWindow(App):
                 self._dataset_caption = f"{self._dataset_name} · {len(frame):,} rows · {len(frame.columns):,} columns"
                 self.preview_label.text = self._dataset_caption
                 self.wizard.reset()
-                self.start_screen.visible = False
+                self.model_view.clear_model()
             except (DataImportError, OSError, TypeError, ValueError) as error:
                 self.error_dialog.show_error(str(error), title=OPEN_ERROR_TITLE)
 

@@ -14,14 +14,14 @@ class StartScreen(Container):
     """Show two large choices: recover a previously saved model, or load a dataset to create a new model.
 
     The owner window handles ``load_model`` and ``load_dataset``, and replaces this screen with the matching
-    sections once a file loads. ``notice`` is an empty line below the choices where the owner can explain the outcome.
+    sections once a file loads.
     """
 
     load_model: ClassVar[Event[UiEvent]] = Event(UiEvent)
     load_dataset: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Center the heading, both choices and the notice in the available space."""
+        """Center the heading and both choices in the available space."""
         super().__init__(layout="stack", spacing=12, **properties)
         Container(parent=self, flex=1)
         Label(parent=_centered(self, 44), text="How do you want to start?", font_size=30)
@@ -43,7 +43,6 @@ class StartScreen(Container):
             icon="grid",
             width=TILE_WIDTH,
         )
-        self.notice = Label(parent=_centered(self, 24), foreground=tokens.muted)
         Container(parent=self, flex=1)
 
     def model_tile_on_click(self, event: ClickEvent) -> None:
