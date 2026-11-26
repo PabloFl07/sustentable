@@ -29,8 +29,9 @@ class ModelStep(Step):
     shown with ``description_text``; its button is only enabled while a model is shown, and ``show_saved`` reports where
     it was saved.
 
-    A step built with ``creatable=False`` shows models loaded from a file with ``show_loaded``: it has no create button
-    and lists the input and output columns instead, because the columns step is not available for them.
+    ``show_loaded`` shows a model loaded from a file instead. There is no data behind it, so the create button is
+    replaced by the input and output columns, which the columns step cannot show. Clearing a loaded model also clears
+    the description that came with it, so it is never saved with a model created afterwards.
 
     ``has_unsaved_changes`` tells whether the model shown was never saved or its description changed since it was
     saved or loaded, and ``saved_path`` is that file. ``edited`` is emitted whenever the description changes.
@@ -40,22 +41,23 @@ class ModelStep(Step):
     save_model: ClassVar[Event[UiEvent]] = Event(UiEvent)
     edited: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
-    def __init__(self, tokens: Tokens, *, creatable: bool = True, **properties: object) -> None:
+    def __init__(self, tokens: Tokens, **properties: object) -> None:
         """Place the create button or the columns, the status, the formula, the metrics table and the save panel."""
         super().__init__(title="Model", direction="horizontal", height=STEP_HEIGHT, padding=8, spacing=16, **properties)
-        self._creatable = creatable
         self._prerequisite = ""
         self._model: RegressionModel | None = None
+        self._loaded = False
         self._saved_path: Path | None = None
         # The description written to ``_saved_path``, or ``None`` while the model shown has not been saved.
         self._saved_description: str | None = None
-        self._loaded = False
+        # Whether ``_saved_path`` was written by saving the model, rather than read when it was loaded.
+        self._written = False
         box, muted = tokens.raised, tokens.muted
 
         actions = Container(parent=self, layout="stack", spacing=8, width=_ACTIONS_WIDTH)
-        self.create_button = Button(parent=actions, text="Create model", width=_ACTIONS_WIDTH, height=36, visible=creatable)
-        Label(parent=actions, text="COLUMNS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted, visible=not creatable)
-        self.columns_text = Label(parent=actions, word_wrap=True, visible=not creatable)
+        self.create_button = Button(parent=actions, text="Create model", width=_ACTIONS_WIDTH, height=36)
+        self.columns_caption = Label(parent=actions, text="COLUMNS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        self.columns_text = Label(parent=actions, word_wrap=True)
         self.status = Label(parent=actions, word_wrap=True, flex=1)
 
         formula = Container(parent=self, layout="stack", spacing=4, flex=1)
@@ -85,6 +87,11 @@ class ModelStep(Step):
         return self._model
 
     @property
+    def loaded(self) -> bool:
+        """Whether the model shown was loaded from a file, so there is no data behind it."""
+        return self._loaded
+
+    @property
     def description_text(self) -> str:
         """The description written by the user, without surrounding blank space. It may be empty."""
         return self.description.text.strip()
@@ -106,20 +113,20 @@ class ModelStep(Step):
 
     def show_model(self, model: RegressionModel) -> None:
         """Show the formula and metrics of a newly created model, replacing the previous one; it starts unsaved."""
-        self._show(model, saved_path=None, saved_description=None, loaded=False)
+        self._show(model, loaded=False, saved_path=None, saved_description=None)
 
     def show_loaded(self, model: RegressionModel, description: str, path: Path) -> None:
         """Show a model loaded from ``path`` with the ``description`` saved with it, which starts without unsaved changes."""
         self.description.text = description
-        self._show(model, saved_path=path, saved_description=self.description_text, loaded=True)
+        self._show(model, loaded=True, saved_path=path, saved_description=self.description_text)
 
     def clear_model(self) -> None:
-        """Stop showing a model whose data has changed."""
-        self._show(None, saved_path=None, saved_description=None, loaded=False)
+        """Stop showing a model whose data has changed or that has been replaced."""
+        self._show(None, loaded=False, saved_path=None, saved_description=None)
 
     def show_saved(self, path: Path, description: str) -> None:
         """Report that the model shown was saved to ``path`` with ``description``; editing it again is an unsaved change."""
-        self._saved_path, self._saved_description, self._loaded = path, description, False
+        self._saved_path, self._saved_description, self._written = path, description, True
         self._refresh()
 
     def create_button_on_click(self, event: ClickEvent) -> None:
@@ -136,16 +143,21 @@ class ModelStep(Step):
         self._refresh()
         self.edited.emit(UiEvent(source=self, origin=event.origin))
 
-    def _show(self, model: RegressionModel | None, saved_path: Path | None, saved_description: str | None, loaded: bool) -> None:
-        self._model, self._saved_path, self._saved_description, self._loaded = model, saved_path, saved_description, loaded
+    def _show(self, model: RegressionModel | None, loaded: bool, saved_path: Path | None, saved_description: str | None) -> None:
+        if self._loaded and not loaded:
+            self.description.text = ""
+        self._model, self._loaded, self._saved_path, self._saved_description = model, loaded, saved_path, saved_description
+        self._written = False
         self._refresh()
 
     def _refresh(self) -> None:
+        self.create_button.visible = not self._loaded
+        self.columns_caption.visible = self.columns_text.visible = self._loaded
         self.create_button.enabled = not self._prerequisite
         model = self._model
         self.save_button.enabled = model is not None
         if model is None:
-            self.status.text = (self._prerequisite or _READY) if self._creatable else ""
+            self.status.text = self._prerequisite or _READY
             self.status.tooltip = ""
             self.columns_text.text = ""
             self.formula_caption.text = "FORMULA"
@@ -159,8 +171,8 @@ class ModelStep(Step):
             self.status.text = f"Model created successfully. {kind} regression trained on {train.rows:,} rows and tested on {test.rows:,} rows."
         else:
             # Next to the columns there is only room for the file name; the tooltip keeps the full path.
-            place = self._saved_path if self._creatable else self._saved_path.name
-            self.status.text = f"Model {'loaded from' if self._loaded else 'saved to'} {place}"
+            place = self._saved_path.name if self._loaded else self._saved_path
+            self.status.text = f"Model {'saved to' if self._written else 'loaded from'} {place}"
             if self.has_unsaved_changes:
                 self.status.text += ". The description has unsaved changes."
         self.status.tooltip = "" if self._saved_path is None else str(self._saved_path)

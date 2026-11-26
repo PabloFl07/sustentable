@@ -35,7 +35,6 @@ from sustentable.gui.controls.loading_spinner import LoadingSpinner
 from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.scatter_chart import LineSeries, PlaneSeries, PointSeries, PointSeries3D, ScatterChart
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
-from sustentable.gui.model_view import ModelView
 from sustentable.gui.start_screen import StartScreen
 from sustentable.gui.steps.columns_step import ColumnsStep
 from sustentable.gui.steps.dataset_step import DatasetStep
@@ -50,6 +49,11 @@ LOAD_ERROR_TITLE = "Unable to load model"
 LOADED_TITLE = "Model loaded"
 SAVE_ERROR_TITLE = "Unable to save model"
 SAVED_TITLE = "Model saved"
+NO_DATA_NOTE = (
+    "This model was loaded from a file, which holds no data, so there is no data table or fit chart. "
+    "Its columns, formula and metrics are in the Model step, where its description can be edited and saved again. "
+    "Open a dataset in the Dataset step to create a new model."
+)
 # Characters that cannot appear in a file name on Windows, macOS or Linux.
 _UNSAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 # Fixed colors keep both subsets recognizable in any theme; translucent markers show where points overlap.
@@ -61,16 +65,17 @@ LINE_COLOR = "#34d399"
 class DatasetWindow(App):
     """Load data, confirm regression columns and retain the confirmed train/test subsets and model.
 
-    The window opens on a start screen that offers to load a saved model or a dataset. A dataset shows the guided
-    workflow; a saved model shows ``model_view`` instead, without any of the sections that work with data. Loading one
-    discards the other, and a model with unsaved changes is only discarded after the user confirms it.
+    The window opens on a start screen that offers to load a saved model or a dataset; either one opens the steps.
+    Loading one discards the other, and a model with unsaved changes is only discarded after the user confirms it.
 
     ``dataset`` is the last successfully loaded frame. ``selection``, ``train_data`` and ``test_data``
     hold confirmed results, or ``None`` when a prerequisite has changed. ``preprocessed_data`` holds the
     (train, test) subsets without missing values in the selected columns, ready for the model.
     After preprocessing is applied the shared table shows those subsets; it shows the loaded dataset again
-    once the result is discarded. ``model`` is the model created from ``preprocessed_data``, kept for saving and
-    predictions; while the model step is selected, its fit chart takes the place of the table.
+    once the result is discarded. ``model`` is the model created from ``preprocessed_data`` or loaded from a file,
+    kept for saving and predictions; while the model step is selected, its fit chart takes the place of the table.
+    A loaded model has no dataset: the steps that work with data are disabled and skipped, and a note takes the place
+    of the table and the chart.
     A model with two inputs draws that fit as a plane that can be rotated, panned and zoomed; the other models draw a flat chart.
     """
 
@@ -92,7 +97,6 @@ class DatasetWindow(App):
         self._dataset_caption = "Dataset preview"
         self._showing_processed = False
         self.start_screen = StartScreen(parent=self, tokens=self.theme.tokens, flex=1)
-        self.model_view = ModelView(parent=self, tokens=self.theme.tokens, flex=1)
         self.wizard = Stepper(parent=self, orientation="horizontal", linear=True, header_height=48)
         self.dataset_step = DatasetStep(parent=self.wizard)
         self.columns_step = ColumnsStep(parent=self.wizard, tokens=self.theme.tokens)
@@ -109,6 +113,9 @@ class DatasetWindow(App):
         self.fit_panel = Container(parent=self, layout="stack", flex=1, spacing=8, visible=False)
         self.fit_label = Label(parent=self.fit_panel, height=24)
         self.fit_chart = ScatterChart(parent=self.fit_panel, flex=1)
+        self.no_data_panel = Container(parent=self, layout="stack", flex=1, spacing=8, visible=False)
+        Label(parent=self.no_data_panel, text="No data", height=24)
+        Label(parent=self.no_data_panel, text=NO_DATA_NOTE, word_wrap=True, foreground=self.theme.tokens.muted)
         self.footer = Container(parent=self, layout="dock", height=36, spacing=8)
         self.advance = Button(parent=self.footer, text="Continue", dock="right", width=176)
         self.back = SidebarButton(parent=self.footer, text="Back", dock="right", width=80)
@@ -315,14 +322,19 @@ class DatasetWindow(App):
 
     def _refresh(self) -> None:
         idle = not self._busy_message
-        self.wizard.enabled = self.dataset_step.open_dataset.enabled = self.load_model_button.enabled = idle
-        self.start_screen.enabled = self.model_view.enabled = idle
+        loaded = self.dataset is None and self.model is not None
+        self.wizard.enabled = self.dataset_step.open_dataset.enabled = self.load_model_button.enabled = self.start_screen.enabled = idle
+        # A loaded model has no data, so the steps that prepare data cannot be completed: they are skipped, not required.
+        self.wizard.linear = not loaded
+        for data_step in (self.columns_step, self.split_step, self.preprocess_step):
+            data_step.enabled = not loaded
         self.back.enabled = not self._busy_message and self.wizard.selected_index > 0
         self.advance.text = "Continue"
         self.feedback.text = ""
         problem = ""
+        open_dataset = "Open a dataset to create a new model." if loaded else "Open a dataset to begin."
         for step, issue, confirmed in (
-            (self.dataset_step, "Open a dataset to begin." if self.dataset is None else "", self.dataset is not None),
+            (self.dataset_step, open_dataset if self.dataset is None else "", self.dataset is not None),
             (self.columns_step, self.columns_step.problem, self.selection is not None),
             (self.split_step, self.split_step.problem, self.train_data is not None),
             (self.preprocess_step, self._preprocess_problem(), self.preprocessed_data is not None),
@@ -353,13 +365,12 @@ class DatasetWindow(App):
             self.feedback.text = self._busy_message
         self.advance.enabled = not self._busy_message and not problem and self.wizard.selected_index < len(self.wizard.steps) - 1
         self.model_step.set_prerequisite(self._model_prerequisite())
-        loaded = self.model_view.model is not None
-        starting = self.dataset is None and not loaded
-        working = not starting and not loaded
-        self.start_screen.visible, self.model_view.visible = starting, loaded
-        self.wizard.visible = self.footer.visible = self.feedback.visible = working
-        showing_fit = working and self.model is not None and self.wizard.selected_step is self.model_step
-        self.preview.visible, self.fit_panel.visible = working and not showing_fit, showing_fit
+        starting = self.dataset is None and self.model is None
+        self.start_screen.visible = starting
+        self.wizard.visible = self.footer.visible = self.feedback.visible = not starting
+        showing_fit = self.dataset is not None and self.model is not None and self.wizard.selected_step is self.model_step
+        self.preview.visible = self.dataset is not None and not showing_fit
+        self.fit_panel.visible, self.no_data_panel.visible = showing_fit, loaded
 
     def _preprocess_problem(self) -> str:
         """Block the model while the selected columns still contain missing values."""
@@ -410,20 +421,8 @@ class DatasetWindow(App):
         await self._browse_model()
 
     async def load_model_button_on_click(self, event: ClickEvent) -> None:
-        """Choose a saved model to replace the dataset workflow."""
+        """Choose a saved model to replace the current dataset or model."""
         await self._browse_model()
-
-    async def model_view_on_load_model(self, event: UiEvent) -> None:
-        """Choose another saved model to replace the one shown."""
-        await self._browse_model()
-
-    async def model_view_on_load_dataset(self, event: UiEvent) -> None:
-        """Choose a dataset to replace the model shown and create a new model."""
-        await self._browse_dataset()
-
-    async def model_view_on_save_model(self, event: UiEvent) -> None:
-        """Save the loaded model again with its description."""
-        await self._save_model(self.model_view.summary)
 
     async def _browse_model(self) -> None:
         """Open the model dialog and load the chosen file; cancelling or a dialog error changes nothing."""
@@ -440,10 +439,11 @@ class DatasetWindow(App):
             await self.show_saved_model(chosen)
 
     async def show_saved_model(self, path: str | Path) -> None:
-        """Load a saved model off the UI thread and show it instead of any dataset; keep the previous state if it fails.
+        """Load a saved model off the UI thread and open it in the model step; keep the previous state if it fails.
 
-        A current model with unsaved changes is only replaced after the user confirms it. Overlapping requests are
-        ignored, and cancelling the wait discards the worker's eventual result.
+        Any dataset is discarded, because the model replaces everything that was prepared from it. A current model with
+        unsaved changes is only replaced after the user confirms it. Overlapping requests are ignored, and cancelling
+        the wait discards the worker's eventual result.
         """
         if self._busy_message or not await self._may_discard_model():
             return
@@ -454,16 +454,19 @@ class DatasetWindow(App):
             self.error_dialog.show_error(str(error), title=LOAD_ERROR_TITLE)
             return
         self._discard_dataset()
-        self.model_view.show_model(saved)
+        self.model = saved.model
+        self.model_step.show_loaded(saved.model, saved.description, saved.path)
+        self.predict_step.show_model(saved.model)
+        # Setting the index skips the linear checks, which would still require the steps that prepare data.
+        self.wizard.selected_index = self.wizard.steps.index(self.model_step)
         self._refresh()
         self.notice_dialog.show_error(f"Model loaded from:\n{saved.path}", title=LOADED_TITLE)
 
     async def _may_discard_model(self) -> bool:
         """Ask before discarding a model with unsaved changes; return whether the current model may be discarded."""
-        panel = next((panel for panel in (self.model_step, self.model_view.summary) if panel.has_unsaved_changes), None)
-        if panel is None:
+        if not self.model_step.has_unsaved_changes:
             return True
-        if panel.saved_path is None:
+        if self.model_step.saved_path is None:
             reason = "The current model has not been saved, so it will be lost if you continue."
         else:
             reason = "The description of the current model has changes that have not been saved. They will be lost if you continue."
@@ -524,7 +527,6 @@ class DatasetWindow(App):
                 self._dataset_caption = f"{self._dataset_name} · {len(frame):,} rows · {len(frame.columns):,} columns"
                 self.preview_label.text = self._dataset_caption
                 self.wizard.reset()
-                self.model_view.clear_model()
             except (DataImportError, OSError, TypeError, ValueError) as error:
                 self.error_dialog.show_error(str(error), title=OPEN_ERROR_TITLE)
 

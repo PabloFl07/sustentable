@@ -53,8 +53,8 @@ def errors(monkeypatch: pytest.MonkeyPatch) -> Mock:
 
 
 def _showing_start(window: StartWindow) -> bool:
-    """Whether the start screen is shown and every workflow section and the model view are hidden."""
-    others = (window.wizard, window.preview, window.fit_panel, window.footer, window.feedback, window.model_view)
+    """Whether the start screen is shown and every workflow section is hidden."""
+    others = (window.wizard, window.preview, window.fit_panel, window.no_data_panel, window.footer, window.feedback)
     return window.start_screen.visible and not any(control.visible for control in others)
 
 
