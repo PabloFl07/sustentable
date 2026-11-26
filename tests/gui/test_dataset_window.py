@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from pandas import DataFrame
-from pysual import CapabilityError, GridColumn, GridRow, UiEvent
+from pysual import CapabilityError, GridColumn, GridRow, UiEvent, get_theme
 from pysual.errors import LifecycleError
 
 from sustentable.core.io.exceptions import CorruptedFileError, MissingFileError, UnsupportedExtensionError
@@ -75,6 +75,14 @@ def show_error_dialog() -> Iterator[Mock]:
     """Capture the window's requests to its reusable error control."""
     with patch.object(ErrorDialog, "show_error", autospec=True) as show:
         yield show
+
+
+def test_the_window_hides_the_keyboard_focus_ring() -> None:
+    """A fully transparent focus color tells Pysual to skip the keyboard ring, including on the app theme."""
+    window = DatasetWindow()
+    window.theme = get_theme("modern_dark")
+    window.build()
+    assert window.theme.tokens.focus == "#00000000"
 
 
 def test_dialog_extensions_follow_the_import_module() -> None:

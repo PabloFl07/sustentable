@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Hashable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import replace
 from pathlib import Path
 
 from pandas import DataFrame, concat
@@ -16,6 +17,7 @@ from pysual import (
     Container,
     Label,
     Stepper,
+    Theme,
     UiEvent,
     autoconfig,  # noqa: F401 (importing it applies pysual's environment defaults)
     get_theme,
@@ -59,6 +61,8 @@ _UNSAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 TRAIN_COLOR = "#60a5facc"
 TEST_COLOR = "#fb923ccc"
 LINE_COLOR = "#34d399"
+# Pysual draws no keyboard ring when the focus color's alpha is zero.
+_HIDDEN_FOCUS = "#00000000"
 
 
 class DatasetWindow(App):
@@ -89,7 +93,7 @@ class DatasetWindow(App):
         """Place the start screen, and the compact horizontal steps above the shared table and a stable navigation footer."""
         self.title, self.width, self.height = "Sustentable", 1280, 720
         self.layout, self.padding, self.spacing = "stack", 16, 12
-        self.theme = with_action_tile(with_sidebar_button(self.theme))
+        self.theme = _without_focus_ring(with_action_tile(with_sidebar_button(self.theme)))
         self.dataset = self.selection = self.train_data = self.test_data = self.preprocessed_data = self.model = None
         self._busy_message = ""
         self._dataset_name = ""
@@ -551,6 +555,11 @@ class DatasetWindow(App):
                 except LifecycleError:
                     # Teardown may already have disposed the controls while cancelling a pending load.
                     pass
+
+
+def _without_focus_ring(theme: Theme) -> Theme:
+    """Return a copy of ``theme`` that draws no keyboard focus ring."""
+    return replace(theme, tokens=replace(theme.tokens, focus=_HIDDEN_FOCUS))
 
 
 def _read_dataset(path: str | Path) -> tuple[str, DataFrame]:

@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -371,14 +371,14 @@ wheels = [
 
 [[package]]
 name = "pysual"
-version = "0.1.7"
+version = "0.1.8"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/68/ab/ac53f68a001d103a0974c0650963409e8868d40e5731ba6b54d89ed53854/pysual-0.1.7.tar.gz", hash = "sha256:52d5017782f8deefbf145fdfdbbf69a84a872645f1e745af8af5de7c569a0195", size = 3538776, upload-time = "2026-11-05T19:25:41.01Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/2b/99a1a1399042095c7464b29731f5fa11922fee109e890c36e4bae1e192d4/pysual-0.1.8.tar.gz", hash = "sha256:2f6ade7084eaeea8799dc75789087c0c5e9d98b687e3cb3502b61fc4c0319427", size = 3541328, upload-time = "2026-11-26T17:11:22.935Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/01/5aab384099766d424c9051f04ce56dd09f140cacdf6e8709b81c3270132c/pysual-0.1.7-py3-none-any.whl", hash = "sha256:6c09498c85f811789d0ec81521c2b6b7a4da67d365881c49f8f053161191a093", size = 1092417, upload-time = "2026-11-05T19:25:33.867Z" },
-    { url = "https://files.pythonhosted.org/packages/51/c0/f9247876f5ed260695bfaad366819b2c20beeb1dc2b14c414b0e693ea0fd/pysual-0.1.7-py3-none-macosx_26_0_arm64.whl", hash = "sha256:cb61d9d400c7ace7c658b356f1e296482d0ade734c501979fadb8de25135fae7", size = 4139821, upload-time = "2026-11-05T19:25:35.624Z" },
-    { url = "https://files.pythonhosted.org/packages/ac/c3/1b756b3624f312225bd0b96452962d4dfecbc093ed8863d747305690f8ae/pysual-0.1.7-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6274a11f47f1714904be995024a9e4012947f9a1bff7b7566b500dd14b72d88b", size = 4264327, upload-time = "2026-11-05T19:25:37.389Z" },
-    { url = "https://files.pythonhosted.org/packages/75/c2/69320d4062cd111d5784e09517d032681da87db8092d576367138c60aab4/pysual-0.1.7-py3-none-win_amd64.whl", hash = "sha256:d3ba6d67d7c5a0e19cf59c1b6a560d05a70d22af44f4578a50945325031e5520", size = 3624224, upload-time = "2026-11-05T19:25:39.368Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/e4/e0fc4875a7395947c8433d0ed86e08e0bdd684b2665c829eac255ae49d28/pysual-0.1.8-py3-none-any.whl", hash = "sha256:b5ab910878e6d766bf2a50c593f9e448ffaeefec600108342ff2ec04daca54a6", size = 1092944, upload-time = "2026-11-26T17:11:15.317Z" },
+    { url = "https://files.pythonhosted.org/packages/65/bd/b94750031b476d577a1d5f4e0eed5bfa88dd3daf21b519d61c9e74d8d0a5/pysual-0.1.8-py3-none-macosx_26_0_arm64.whl", hash = "sha256:73b8685caeafbd72d969fce6b13bac74d376a16c355b66ec6666499247b1387b", size = 4149995, upload-time = "2026-11-26T17:11:17.031Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/b4/975b7a541d535a8e83f71d0e0c85457d9ba2f857d20c77d3d40fb5bd04d1/pysual-0.1.8-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bf17410d48194c3e9ace6ba458fc7e542ffde6a1c631603e486f66ab39593335", size = 4264819, upload-time = "2026-11-26T17:11:19.112Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/11/b2166390d94338529ac49db29dae4dd79a408c3eba77c382f68bd5c2a984/pysual-0.1.8-py3-none-win_amd64.whl", hash = "sha256:c77c0968ee561215411080996ce91ebd54c2d042a77c9f97277c3c5cdc1dd913", size = 3625698, upload-time = "2026-11-26T17:11:20.814Z" },
 ]
 
 [[package]]
@@ -613,7 +613,7 @@ requires-dist = [
     { name = "onnxruntime", specifier = ">=1.32.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pandas", specifier = ">=3.0.6" },
-    { name = "pysual", specifier = ">=0.1.7" },
+    { name = "pysual", specifier = ">=0.1.8" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "scikit-learn", specifier = ">=1.9.1" },
     { name = "skl2onnx", specifier = ">=1.20.0" },
