@@ -109,8 +109,8 @@ class DatasetWindow(App):
         self.back = SidebarButton(parent=self.footer, text="Back", dock="right", width=80)
         self.feedback = Label(parent=self, height=24)
         self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
-        self.notice_dialog = ErrorDialog(title=SAVED_TITLE, width=760, height=340)
-        self.confirm_dialog = ConfirmDialog(width=760, height=300)
+        self.notice_dialog = ErrorDialog(title=SAVED_TITLE, width=560, height=190)
+        self.confirm_dialog = ConfirmDialog(width=560, height=170)
         self._refresh()
 
     async def columns_step_on_edited(self, event: UiEvent) -> None:

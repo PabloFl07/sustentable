@@ -27,8 +27,8 @@ class ConfirmDialog(SubWindow):
         self.message_area = ScrollArea(layout="stack", padding=0, flex=1)
         self.message_text = Label(parent=self.message_area, word_wrap=True)
         self.actions = Container(layout="dock", height=36, spacing=8)
-        self.confirm = Button(parent=self.actions, text="OK", dock="right", width=160)
-        self.cancel = Button(parent=self.actions, text="Cancel", dock="right", width=100)
+        self.confirm = Button(parent=self.actions, text="OK", dock="right", min_width=100)
+        self.cancel = Button(parent=self.actions, text="Cancel", dock="right", min_width=100)
 
     async def ask(self, message: str, title: str | None = None, confirm_text: str = "OK", cancel_text: str = "Cancel") -> bool:
         """Show ``message`` modally and wait, without blocking the UI event loop, until the user answers."""
