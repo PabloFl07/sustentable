@@ -34,6 +34,7 @@ from sustentable.core.model.regression import Metrics, RegressionModel
 MODEL_EXTENSION = ".onnx"
 FORMAT_NAME = "ONNX"
 FORMAT_VERSION = "1.0"
+MODEL_TYPE = "LinearRegression"
 ONNX_INPUT_NAME = "input"
 
 
@@ -79,7 +80,7 @@ def build_metadata(model: RegressionModel, description: str = "", model_file: st
         "name": f"Linear regression - {model.output}",
         "format": FORMAT_NAME,
         "version": FORMAT_VERSION,
-        "model_type": "LinearRegression",
+        "model_type": MODEL_TYPE,
         "model_file": model_file,
         "formula": model.formula,
         "input_columns": [_column_label(column) for column in model.inputs],
