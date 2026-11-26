@@ -1,4 +1,4 @@
-"""Unit tests for saving a regression model as ONNX plus JSON metadata, without the dataset or the charts."""
+"""Unit tests for saving a regression model as a single ONNX file with its metadata, without the dataset or the charts."""
 
 import json
 import math
@@ -75,7 +75,7 @@ def _dataset_values() -> set[float]:
     ],
 )
 def test_extension_is_added_when_missing(tmp_path: Path, chosen: str, model_name: str) -> None:
-    """The ONNX extension is added automatically, and the metadata file sits next to the model."""
+    """The ONNX extension is added automatically when it is missing."""
     files = model_files(tmp_path / chosen)
     assert files.model == tmp_path / model_name
 
