@@ -940,6 +940,51 @@ def test_save_errors_are_reported_and_the_user_can_retry(
     asyncio.run(exercise())
 
 
+def test_saved_model_tracks_description_changes_and_proposes_the_same_file_again(
+    window: WorkflowWindow, model_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dialogs: tuple[Mock, Mock, AsyncMock]
+) -> None:
+    """A created model is unsaved until it is saved; editing its description makes it unsaved again until it is saved again."""
+    folder = tmp_path / "Modelos de energía ñ"
+    folder.mkdir()
+    model_file = folder / "consumo.onnx"
+    chooser = AsyncMock(return_value=str(model_file))
+    monkeypatch.setattr(DatasetWindow, "choose_path", chooser)
+
+    async def exercise() -> None:
+        step = window.model_step
+        await _open_model_step(window, model_path, (0,))
+        assert not step.has_unsaved_changes, "There is no model yet."
+        await window.create_model()
+        assert step.has_unsaved_changes and step.saved_path is None
+        step.description.text = "Primera versión"
+        await _save(window)
+        assert not step.has_unsaved_changes and step.saved_path == model_file
+
+        step.description.text = "Segunda versión"
+        await window.settle()
+        assert step.has_unsaved_changes
+        assert step.status.text == f"Model saved to {model_file}. The description has unsaved changes."
+        assert window.feedback.text == step.status.text
+        await _save(window)
+        assert chooser.await_args.kwargs == {
+            "save": True,
+            "title": "Save model",
+            "extensions": (".onnx",),
+            "suggested_name": "consumo.onnx",
+            "initial_directory": str(folder),
+        }
+        assert not step.has_unsaved_changes and step.status.text == f"Model saved to {model_file}"
+        assert _load(model_file)["description"] == "Segunda versión"
+
+        step.description.text = "  Segunda versión \n"
+        await window.settle()
+        assert not step.has_unsaved_changes, "Surrounding blank space is not saved, so removing it changes nothing."
+        await window.create_model()
+        assert step.has_unsaved_changes and step.saved_path is None, "A new model has not been saved yet."
+
+    asyncio.run(exercise())
+
+
 # ----------------------------------------------------------------------------
 # Predictions
 # ----------------------------------------------------------------------------

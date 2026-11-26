@@ -184,10 +184,22 @@ class DatasetWindow(App):
         self._refresh()
 
     async def model_step_on_save_model(self, event: UiEvent) -> None:
-        """Ask where to save the model shown and save it off the UI thread; any failure keeps the app usable."""
-        if self._busy_message or self.model is None:
+        """Save the model created from the dataset."""
+        await self._save_model(self.model_step)
+
+    def model_step_on_edited(self, event: UiEvent) -> None:
+        """Keep the footer guidance in sync with the model status, which tells whether the description is saved."""
+        self._refresh()
+
+    async def _save_model(self, panel: ModelStep) -> None:
+        """Ask where to save the model shown in ``panel`` and save it off the UI thread; any failure keeps the app usable.
+
+        The dialog proposes the file the model was last saved to or loaded from, or a name based on its output column.
+        """
+        model = panel.model
+        if self._busy_message or model is None:
             return
-        model, description = self.model, self.model_step.description_text
+        description = panel.description_text
         if not description and not await self.confirm_dialog.ask(
             "The model has no description. A short description helps to recognize the model when it is loaded later.",
             title="Empty description",
@@ -195,10 +207,15 @@ class DatasetWindow(App):
             cancel_text="Add description",
         ):
             with suppress(LifecycleError):
-                self.model_step.description.focus()
+                panel.description.focus()
             return
+        previous = panel.saved_path
+        if previous is None:
+            proposal: dict[str, str] = {"suggested_name": _suggested_name(model)}
+        else:
+            proposal = {"suggested_name": previous.name, "initial_directory": str(previous.parent)}
         try:
-            chosen = await self.choose_path(save=True, title="Save model", suggested_name=_suggested_name(model), extensions=(MODEL_EXTENSION,))
+            chosen = await self.choose_path(save=True, title="Save model", extensions=(MODEL_EXTENSION,), **proposal)
         except (CapabilityError, OSError, ValueError) as error:
             self.error_dialog.show_error(str(error), title=SAVE_ERROR_TITLE)
             return
@@ -225,8 +242,8 @@ class DatasetWindow(App):
         except (ModelExportError, OSError, ValueError) as error:
             self.error_dialog.show_error(str(error), title=SAVE_ERROR_TITLE)
             return
-        if self.model is model:
-            self.model_step.show_saved(files.model)
+        if panel.model is model:
+            panel.show_saved(files.model, description)
             self._refresh()
         self.notice_dialog.show_error(f"Model saved to:\n{files.model}", title=SAVED_TITLE)
 
