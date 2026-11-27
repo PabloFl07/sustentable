@@ -1,4 +1,4 @@
-"""Compact input/output selection and selection summary, shown inside the dataset step."""
+"""Input and output column lists, shown beside the dataset preview."""
 
 from collections import Counter
 from collections.abc import Hashable, Iterable
@@ -7,9 +7,10 @@ from typing import ClassVar
 
 from pysual import ChangeEvent, CheckBox, Container, Event, Label, RadioButton, ScrollArea, Tokens, UiEvent
 
-HEADER_HEIGHT = 22
+HEADER_HEIGHT = 20
 ROW_HEIGHT = 28
 ROW_SPACING = 4
+SUMMARY_HEIGHT = 168
 
 
 class ColumnsStep(Container):
@@ -27,8 +28,8 @@ class ColumnsStep(Container):
     edited: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Keep the X list, the Y list and the summary in three separate columns."""
-        super().__init__(layout="stack", direction="horizontal", spacing=12, flex=1, **properties)
+        """Stack two narrow lists and keep the selection summary underneath them."""
+        super().__init__(layout="stack", spacing=8, flex=1, **properties)
         self._background = tokens.raised
         self._tokens = tokens
         # Each panel gets its own radio group so two panels never share the Y choice.
@@ -38,19 +39,17 @@ class ColumnsStep(Container):
         self._inputs: list[CheckBox] = []
         self._outputs: list[RadioButton] = []
 
-        inputs = Container(parent=self, layout="stack", spacing=6, flex=1)
-        Label(parent=inputs, text="Inputs (X)", height=HEADER_HEIGHT)
+        lists = Container(parent=self, layout="stack", direction="horizontal", spacing=8, flex=1)
+        inputs = Container(parent=lists, layout="stack", spacing=6, flex=1)
+        Label(parent=inputs, text="INPUTS (X)", height=HEADER_HEIGHT, font_size=13, foreground=tokens.muted)
         self.input_group = ScrollArea(parent=inputs, layout="stack", padding=8, spacing=ROW_SPACING, background=tokens.raised, flex=1)
-        outputs = Container(parent=self, layout="stack", spacing=6, flex=1)
-        Label(parent=outputs, text="Output (Y)", height=HEADER_HEIGHT)
+        outputs = Container(parent=lists, layout="stack", spacing=6, flex=1)
+        Label(parent=outputs, text="OUTPUT (Y)", height=HEADER_HEIGHT, font_size=13, foreground=tokens.muted)
         self.output_group = ScrollArea(parent=outputs, layout="stack", padding=8, spacing=ROW_SPACING, background=tokens.raised, flex=1)
-        summary = Container(parent=self, layout="stack", spacing=6, flex=1)
 
-        # Mode header (outside the box)
-        self.mode = Label(parent=summary, text="", height=HEADER_HEIGHT, font_size=16)
-        # Box summarizing the selection: the Y column and the X columns as chips
+        self.mode = Label(parent=self, text="", height=HEADER_HEIGHT, font_size=14)
         box = tokens.raised
-        self.summary_box = ScrollArea(parent=summary, layout="stack", padding=10, spacing=6, background=box, flex=1)
+        self.summary_box = ScrollArea(parent=self, layout="stack", padding=10, spacing=6, background=box, max_height=SUMMARY_HEIGHT)
         Label(parent=self.summary_box, text="OUTPUT (Y)", height=20, font_size=13, foreground=tokens.muted, background=box)
         self.output_chips = Container(parent=self.summary_box, layout="flow", direction="horizontal", spacing=6)
         self.input_caption = Label(parent=self.summary_box, text="INPUTS (X)", height=20, font_size=13, foreground=tokens.muted, background=box)
@@ -140,15 +139,17 @@ class ColumnsStep(Container):
         inputs = self._input_positions()
         if not inputs or output is None:
             self.mode.text = "Choose at least one X and one Y"
+            self.mode.foreground = self._tokens.muted
             self._show_chips(self.output_chips, [], primary=True)
             self._show_chips(self.input_chips, [], primary=False)
             self.summary_box.visible = False
             return
 
+        self.mode.foreground = self._tokens.foreground
         self.mode.text = "Simple regression" if len(inputs) == 1 else "Multiple regression"
         input_texts = [self._texts[position] for position in inputs]
         self._show_chips(self.output_chips, [self._texts[output]], primary=True)
-        self.input_caption.text = "INPUTS (X) : " + str(len(inputs))
+        self.input_caption.text = f"INPUTS (X) · {len(inputs)}"
         self._show_chips(self.input_chips, input_texts, primary=False)
         self.summary_box.visible = True
 

@@ -39,6 +39,7 @@ from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.scatter_chart import LineSeries, PlaneSeries, PointSeries, PointSeries3D, ScatterChart
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
 from sustentable.gui.start_screen import StartScreen
+from sustentable.gui.steps.columns_step import ColumnsStep
 from sustentable.gui.steps.dataset_step import DatasetStep
 from sustentable.gui.steps.model_step import ModelStep
 from sustentable.gui.steps.predict_step import PredictStep
@@ -76,7 +77,8 @@ class DatasetWindow(App):
     hold confirmed results, or ``None`` when a prerequisite has changed. ``preprocessed_data`` holds the
     (train, test) subsets without missing values in the selected columns, ready for the model.
     After preprocessing is applied the shared table shows those subsets; it shows the loaded dataset again
-    once the result is discarded. ``model`` is the model created from ``preprocessed_data`` or loaded from a file,
+    once the result is discarded. On the dataset step the column lists sit beside that table.
+    ``model`` is the model created from ``preprocessed_data`` or loaded from a file,
     kept for saving and predictions; while the model step is selected, its fit chart takes the place of the table.
     A loaded model has no dataset: the steps that work with data are disabled and skipped, and a note takes the place
     of the table and the chart.
@@ -91,7 +93,7 @@ class DatasetWindow(App):
     model: RegressionModel | None
 
     def build(self) -> None:
-        """Place the steps above the shared table, the start dialog over them, and a stable navigation footer."""
+        """Place the steps above the shared table, the column lists beside it, and navigation on one footer row."""
         self.title, self.width, self.height = "Sustentable", 1280, 720
         self.layout, self.padding, self.spacing = "stack", 16, 12
         self.theme = _without_focus_ring(with_action_tile(with_sidebar_button(self.theme)))
@@ -102,8 +104,7 @@ class DatasetWindow(App):
         self._showing_processed = False
         self._start_dismissed = False
         self.wizard = Stepper(parent=self, orientation="horizontal", linear=True, header_height=48)
-        self.dataset_step = DatasetStep(parent=self.wizard, tokens=self.theme.tokens)
-        self.columns_step = self.dataset_step.column_picker
+        self.dataset_step = DatasetStep(parent=self.wizard)
         self.split_step = SplitStep(parent=self.wizard)
         self.preprocess_step = PreprocessStep(parent=self.wizard)
         self.model_step = ModelStep(parent=self.wizard, tokens=self.theme.tokens)
@@ -112,19 +113,24 @@ class DatasetWindow(App):
         self.loading_row = Container(parent=self, layout="stack", direction="horizontal", spacing=8, height=24, visible=False)
         self.loading_spinner = LoadingSpinner(parent=self.loading_row, width=24, height=24)
         self.loading_label = Label(parent=self.loading_row, flex=1)
-        self.preview = Container(parent=self, layout="stack", flex=1, spacing=8)
+        # The lists use the table's height. They stay narrow instead of stretching across the window.
+        self.workspace = Container(parent=self, layout="stack", direction="horizontal", flex=1, spacing=12)
+        self.column_rail = Container(parent=self.workspace, layout="stack", width=460, visible=False)
+        self.columns_step = ColumnsStep(parent=self.column_rail, tokens=self.theme.tokens)
+        stage = Container(parent=self.workspace, layout="stack", flex=1)
+        self.preview = Container(parent=stage, layout="stack", flex=1, spacing=8)
         self.dataset_grid = PandaGrid(parent=self.preview, flex=1)
         self.preview_label = Label(parent=self.preview, text="Dataset preview", height=24)
-        self.fit_panel = Container(parent=self, layout="stack", flex=1, spacing=8, visible=False)
+        self.fit_panel = Container(parent=stage, layout="stack", flex=1, spacing=8, visible=False)
         self.fit_label = Label(parent=self.fit_panel, height=24)
         self.fit_chart = ScatterChart(parent=self.fit_panel, flex=1)
-        self.no_data_panel = Container(parent=self, layout="stack", flex=1, spacing=8, visible=False)
+        self.no_data_panel = Container(parent=stage, layout="stack", flex=1, spacing=8, visible=False)
         Label(parent=self.no_data_panel, text="No data", height=24)
         Label(parent=self.no_data_panel, text=NO_DATA_NOTE, word_wrap=True, foreground=self.theme.tokens.muted)
         self.footer = Container(parent=self, layout="dock", height=36, spacing=8)
         self.advance = Button(parent=self.footer, text="Continue", dock="right", width=176)
         self.back = SidebarButton(parent=self.footer, text="Back", dock="right", width=80)
-        self.feedback = Label(parent=self, height=24)
+        self.feedback = Label(parent=self.footer, dock="fill")
         self.start_screen = StartScreen(tokens=self.theme.tokens)
         self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
         self.notice_dialog = ErrorDialog(title=SAVED_TITLE, width=560, height=190)
@@ -382,6 +388,7 @@ class DatasetWindow(App):
         if self.dataset is not None or self.model is not None:
             self._dismiss_start_screen()
         self.load_model_button.visible = self.wizard.selected_step is self.model_step
+        self.column_rail.visible = self.dataset is not None and self.wizard.selected_step is self.dataset_step
         showing_fit = self.dataset is not None and self.model is not None and self.wizard.selected_step is self.model_step
         self.preview.visible = self.dataset is not None and not showing_fit
         self.fit_panel.visible, self.no_data_panel.visible = showing_fit, loaded

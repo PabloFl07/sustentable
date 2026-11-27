@@ -7,16 +7,15 @@ from pysual import Button, ChangeEvent, ClickEvent, Container, Event, Label, Scr
 
 from sustentable.core.model.regression import RegressionModel, format_metric
 
-STEP_HEIGHT = 248
+STEP_HEIGHT = 198
 _READY = "Ready. The model is fitted with the training subset only and evaluated on both subsets."
 _NO_FORMULA = "Create the model to see its formula."
 _NO_VALUE = "—"
 _ACTIONS_WIDTH = 220
 _DESCRIPTION_WIDTH = 280
 _NAME_WIDTH = 200
-_VALUE_WIDTH = 112
-_CELL_SPACING = 8
-_TABLE_PADDING = 10
+_CELL_SPACING = 6
+_TABLE_PADDING = 8
 _CAPTION_HEIGHT = 20
 _FORMULA_HEIGHT = 36
 _BUTTON_HEIGHT = 36
@@ -63,7 +62,7 @@ class ModelStep(Step):
 
         actions = Container(parent=self, layout="stack", spacing=4, width=_ACTIONS_WIDTH)
         Label(parent=actions, text="MODEL", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        commands = Container(parent=actions, layout="stack", padding=10, spacing=8, background=box, flex=1)
+        commands = Container(parent=actions, layout="stack", padding=8, spacing=6, background=box)
         self.create_button = Button(parent=commands, text="Create model", height=_BUTTON_HEIGHT)
         self.load_button = Button(parent=commands, text="Load model", height=_BUTTON_HEIGHT)
         self.save_button = Button(parent=commands, text="Save model", height=_BUTTON_HEIGHT)
@@ -76,7 +75,7 @@ class ModelStep(Step):
         formula_line = ScrollArea(parent=details, layout="stack", direction="horizontal", padding=8, height=_FORMULA_HEIGHT, background=box)
         self.formula = Label(parent=formula_line, word_wrap=False, font_family="mono", height=20, background=box)
         Label(parent=details, text="METRICS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        table = Container(parent=details, layout="stack", padding=_TABLE_PADDING, spacing=8, background=box)
+        table = Container(parent=details, layout="stack", padding=_TABLE_PADDING, spacing=_CELL_SPACING, background=box)
         _row(table, box, ("Metric", "Training", "Test"), foreground=muted)
         self.r2_values = _row(table, box, ("Determination (R²)", _NO_VALUE, _NO_VALUE))
         self.mse_values = _row(table, box, ("Mean squared error", _NO_VALUE, _NO_VALUE))
@@ -201,10 +200,9 @@ class ModelStep(Step):
 
 def _row(table: Container, background: str, texts: tuple[str, str, str], foreground: str | None = None) -> tuple[Label, Label]:
     """Add a metric name and its training and test cells to ``table``; return both value cells."""
-    row = Container(parent=table, layout="stack", direction="horizontal", spacing=_CELL_SPACING, height=22)
-    widths = (_NAME_WIDTH, _VALUE_WIDTH, _VALUE_WIDTH)
-    _, train, test = (
-        Label(parent=row, text=text, width=width, background=background, foreground=foreground)
-        for text, width in zip(texts, widths, strict=True)
-    )
+    row = Container(parent=table, layout="stack", direction="horizontal", spacing=_CELL_SPACING, height=20)
+    name, train_text, test_text = texts
+    Label(parent=row, text=name, width=_NAME_WIDTH, background=background, foreground=foreground)
+    train = Label(parent=row, text=train_text, flex=1, background=background, foreground=foreground)
+    test = Label(parent=row, text=test_text, flex=1, background=background, foreground=foreground)
     return train, test
