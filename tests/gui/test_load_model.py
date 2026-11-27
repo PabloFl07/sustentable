@@ -30,7 +30,7 @@ AREA = [3, 7, 1, 9, 4, 8, 2, 6, 5, 0]
 OCCUPANTS = [1, 4, 2, 2, 5, 3, 0, 1, 4, 3]
 DATA = DataFrame({"area": AREA, "occupants": OCCUPANTS, "energy": [2 * a - 3 * o + 50 for a, o in zip(AREA, OCCUPANTS, strict=True)]})
 FORMULA = "energy = 2.0000 * area - 3.0000 * occupants + 50.0000"
-DATASET, COLUMNS, SPLIT, PREPROCESS, MODEL, PREDICT = range(6)
+DATASET, SPLIT, PREPROCESS, MODEL, PREDICT = range(5)
 
 
 class ModelWindow(DatasetWindow):
@@ -191,7 +191,7 @@ def test_steps_that_work_with_data_are_skipped_while_a_loaded_model_is_shown(
 
     async def exercise() -> None:
         await _load_from_start(window)
-        for index in (COLUMNS, SPLIT, PREPROCESS):
+        for index in (SPLIT, PREPROCESS):
             await window.request_step(index)
             assert window.wizard.selected_index == MODEL
         assert window.advance.enabled
@@ -213,7 +213,7 @@ def test_steps_that_work_with_data_are_skipped_while_a_loaded_model_is_shown(
         assert not window.model_step.columns_text.visible and window.model_step.create_button.visible
         assert not window.wizard.can_select(MODEL)
         await window.request_step(MODEL)
-        assert window.wizard.selected_index == COLUMNS, "The guided order applies again, starting at the first step to do."
+        assert window.wizard.selected_index == DATASET, "The guided order applies again, starting at the first step to do."
 
     asyncio.run(exercise())
 

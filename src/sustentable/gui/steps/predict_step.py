@@ -4,14 +4,15 @@ from pysual import Button, ClickEvent, Container, Label, ScrollArea, Step, TextB
 
 from sustentable.core.model.prediction import PredictionInputError, Predictor, format_prediction, predict_value
 
-STEP_HEIGHT = 176
+STEP_HEIGHT = 200
 _NO_MODEL = "Create or load a model to make predictions."
 _READY = "Enter a value for each input. Decimals can use a point or a comma, such as 3.5 or 3,5."
 _NO_RESULT = "—"
-_FIELD_WIDTH = 180
-_ROW_HEIGHT = 32
-_LABEL_WIDTH = 160
-_ACTIONS_WIDTH = 320
+_FIELD_WIDTH = 200
+_ROW_HEIGHT = 36
+_LABEL_WIDTH = 140
+_FORM_WIDTH = _LABEL_WIDTH + _FIELD_WIDTH + 44
+_RESULT_WIDTH = 320
 _CAPTION_HEIGHT = 20
 
 
@@ -25,7 +26,7 @@ class PredictStep(Step):
     """
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Place the scrollable input fields next to the prediction button, the result and the status."""
+        """Place the inputs and the prediction button in one form, with the result beside it."""
         super().__init__(title="Predict", optional=True, direction="horizontal", height=STEP_HEIGHT, padding=8, spacing=16, **properties)
         self._model: Predictor | None = None
         self._fields: list[TextBox] = []
@@ -34,16 +35,17 @@ class PredictStep(Step):
         self._colors = tokens.foreground, tokens.danger
         box, muted = tokens.raised, tokens.muted
 
-        inputs = Container(parent=self, layout="stack", spacing=4, flex=1)
-        self.inputs_caption = Label(parent=inputs, text="INPUTS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        self.field_list = ScrollArea(parent=inputs, layout="stack", spacing=4, flex=1)
+        form = Container(parent=self, layout="stack", spacing=8, width=_FORM_WIDTH)
+        self.inputs_caption = Label(parent=form, text="INPUTS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        self.field_list = ScrollArea(parent=form, layout="stack", padding=8, spacing=6, background=box, flex=1)
+        self.predict_button = Button(parent=form, text="Make prediction", height=36)
 
-        actions = Container(parent=self, layout="stack", spacing=8, width=_ACTIONS_WIDTH)
-        self.predict_button = Button(parent=actions, text="Make prediction", width=_ACTIONS_WIDTH, height=36)
-        self.result_caption = Label(parent=actions, text="PREDICTION", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        result_box = Container(parent=actions, layout="stack", padding=8, background=box, height=40)
+        result_panel = Container(parent=self, layout="stack", spacing=4, width=_RESULT_WIDTH)
+        self.result_caption = Label(parent=result_panel, text="PREDICTION", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        result_box = Container(parent=result_panel, layout="stack", padding=10, background=box, height=44)
         self.result = Label(parent=result_box, text=_NO_RESULT, font_family="mono", background=box)
-        self.status = Label(parent=actions, word_wrap=True, flex=1)
+        self.status = Label(parent=result_panel, word_wrap=True, flex=1)
+        Container(parent=self, flex=1)
         self._refresh()
 
     @property

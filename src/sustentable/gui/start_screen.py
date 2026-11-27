@@ -1,8 +1,8 @@
-"""Start screen that offers to begin from a saved model or from a dataset."""
+"""Start dialog that offers to begin from a saved model or from a dataset."""
 
 from typing import ClassVar
 
-from pysual import ClickEvent, Container, Event, Label, Tokens, UiEvent
+from pysual import ClickEvent, Container, Event, Label, SubWindow, Tokens, UiEvent
 
 from sustentable.gui.controls.action_tile import ActionTile
 
@@ -10,19 +10,30 @@ TILE_WIDTH = 340
 TILE_HEIGHT = 260
 
 
-class StartScreen(Container):
-    """Show two large choices: recover a previously saved model, or load a dataset to create a new model.
+class StartScreen(SubWindow):
+    """Offer two choices over the workflow: recover a saved model, or load a dataset to create a new one.
 
-    The owner window handles ``load_model`` and ``load_dataset``, and replaces this screen with the matching
-    sections once a file loads.
+    The owner window handles ``load_model`` and ``load_dataset``. Closing the dialog leaves the dataset step,
+    where a file can still be opened. A successful load closes the dialog.
     """
 
     load_model: ClassVar[Event[UiEvent]] = Event(UiEvent)
     load_dataset: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Center the heading and both choices in the available space."""
-        super().__init__(layout="stack", spacing=12, **properties)
+        """Center the heading and both choices in a dialog."""
+        defaults: dict[str, object] = {
+            "title": "How do you want to start?",
+            "layout": "stack",
+            "width": 900,
+            "height": 560,
+            "padding": 16,
+            "spacing": 12,
+            "closable": True,
+            "resizable": False,
+        }
+        defaults.update(properties)
+        super().__init__(**defaults)
         Container(parent=self, flex=1)
         Label(parent=_centered(self, 44), text="How do you want to start?", font_size=30)
         subtitle = "Open a model you saved before, or load a dataset to create a new one."

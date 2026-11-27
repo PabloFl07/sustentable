@@ -14,6 +14,7 @@ from pysual import (
     CapabilityError,
     ChangeEvent,
     ClickEvent,
+    ClosingEvent,
     Container,
     Label,
     Stepper,
@@ -38,7 +39,6 @@ from sustentable.gui.controls.panda_grid import PandaGrid
 from sustentable.gui.controls.scatter_chart import LineSeries, PlaneSeries, PointSeries, PointSeries3D, ScatterChart
 from sustentable.gui.controls.sidebar_button import SidebarButton, with_sidebar_button
 from sustentable.gui.start_screen import StartScreen
-from sustentable.gui.steps.columns_step import ColumnsStep
 from sustentable.gui.steps.dataset_step import DatasetStep
 from sustentable.gui.steps.model_step import ModelStep
 from sustentable.gui.steps.predict_step import PredictStep
@@ -47,6 +47,7 @@ from sustentable.gui.steps.split_step import SplitStep
 
 OPEN_ERROR_TITLE = "Unable to open dataset"
 MODEL_ERROR_TITLE = "Unable to create model"
+CREATED_TITLE = "Model created"
 LOAD_ERROR_TITLE = "Unable to load model"
 SAVE_ERROR_TITLE = "Unable to save model"
 SAVED_TITLE = "Model saved"
@@ -68,7 +69,7 @@ _HIDDEN_FOCUS = "#00000000"
 class DatasetWindow(App):
     """Load data, confirm regression columns and retain the confirmed train/test subsets and model.
 
-    The window opens on a start screen that offers to load a saved model or a dataset; either one opens the steps.
+    The window opens the workflow with a start dialog over it. The dialog offers to load a saved model or a dataset.
     Loading one discards the other, and a model with unsaved changes is only discarded after the user confirms it.
 
     ``dataset`` is the last successfully loaded frame. ``selection``, ``train_data`` and ``test_data``
@@ -90,7 +91,7 @@ class DatasetWindow(App):
     model: RegressionModel | None
 
     def build(self) -> None:
-        """Place the start screen, and the compact horizontal steps above the shared table and a stable navigation footer."""
+        """Place the steps above the shared table, the start dialog over them, and a stable navigation footer."""
         self.title, self.width, self.height = "Sustentable", 1280, 720
         self.layout, self.padding, self.spacing = "stack", 16, 12
         self.theme = _without_focus_ring(with_action_tile(with_sidebar_button(self.theme)))
@@ -99,20 +100,21 @@ class DatasetWindow(App):
         self._dataset_name = ""
         self._dataset_caption = "Dataset preview"
         self._showing_processed = False
-        self.start_screen = StartScreen(parent=self, tokens=self.theme.tokens, flex=1)
+        self._start_dismissed = False
         self.wizard = Stepper(parent=self, orientation="horizontal", linear=True, header_height=48)
-        self.dataset_step = DatasetStep(parent=self.wizard)
-        self.columns_step = ColumnsStep(parent=self.wizard, tokens=self.theme.tokens)
+        self.dataset_step = DatasetStep(parent=self.wizard, tokens=self.theme.tokens)
+        self.columns_step = self.dataset_step.column_picker
         self.split_step = SplitStep(parent=self.wizard)
         self.preprocess_step = PreprocessStep(parent=self.wizard)
         self.model_step = ModelStep(parent=self.wizard, tokens=self.theme.tokens)
+        self.load_model_button = self.model_step.load_button
         self.predict_step = PredictStep(parent=self.wizard, tokens=self.theme.tokens)
         self.loading_row = Container(parent=self, layout="stack", direction="horizontal", spacing=8, height=24, visible=False)
         self.loading_spinner = LoadingSpinner(parent=self.loading_row, width=24, height=24)
         self.loading_label = Label(parent=self.loading_row, flex=1)
         self.preview = Container(parent=self, layout="stack", flex=1, spacing=8)
-        self.preview_label = Label(parent=self.preview, text="Dataset preview", height=24)
         self.dataset_grid = PandaGrid(parent=self.preview, flex=1)
+        self.preview_label = Label(parent=self.preview, text="Dataset preview", height=24)
         self.fit_panel = Container(parent=self, layout="stack", flex=1, spacing=8, visible=False)
         self.fit_label = Label(parent=self.fit_panel, height=24)
         self.fit_chart = ScatterChart(parent=self.fit_panel, flex=1)
@@ -122,11 +124,13 @@ class DatasetWindow(App):
         self.footer = Container(parent=self, layout="dock", height=36, spacing=8)
         self.advance = Button(parent=self.footer, text="Continue", dock="right", width=176)
         self.back = SidebarButton(parent=self.footer, text="Back", dock="right", width=80)
-        self.load_model_button = SidebarButton(parent=self.footer, text="Load saved model…", dock="left", width=180)
         self.feedback = Label(parent=self, height=24)
+        self.start_screen = StartScreen(tokens=self.theme.tokens)
         self.error_dialog = ErrorDialog(title=OPEN_ERROR_TITLE)
         self.notice_dialog = ErrorDialog(title=SAVED_TITLE, width=560, height=190)
         self.confirm_dialog = ConfirmDialog(width=560, height=170)
+        self._place_start_screen()
+        self.loaded.connect(self._present_start_screen)
         self._refresh()
 
     async def columns_step_on_edited(self, event: UiEvent) -> None:
@@ -197,6 +201,11 @@ class DatasetWindow(App):
         kind = "simple" if model.is_simple else "multiple"
         view = "plane" if self.fit_chart.plane is not None else "fit"
         self.fit_label.text = f"{self._dataset_name} · {kind} regression {view} · training {len(train):,} + test {len(test):,} rows"
+        self._show_notice(
+            f"Model created successfully. {kind.capitalize()} regression trained on {model.train_metrics.rows:,} rows "
+            f"and tested on {model.test_metrics.rows:,} rows.",
+            CREATED_TITLE,
+        )
         self._refresh()
 
     async def model_step_on_save_model(self, event: UiEvent) -> None:
@@ -306,7 +315,7 @@ class DatasetWindow(App):
         if not self.advance.enabled:
             return
         step = self.wizard.selected_step
-        if step is self.columns_step and self.selection is None:
+        if step is self.dataset_step and self.dataset is not None and self.selection is None:
             self.selection = self.columns_step.selection
             self.split_step.reset(self.dataset)
         elif step is self.split_step and self.train_data is None:
@@ -336,9 +345,10 @@ class DatasetWindow(App):
         self.feedback.text = ""
         problem = ""
         open_dataset = "Open a dataset to create a new model." if loaded else "Open a dataset to begin."
+        dataset_issue = open_dataset if self.dataset is None else self.columns_step.problem
+        dataset_confirmed = self.dataset is not None and self.selection is not None
         for step, issue, confirmed in (
-            (self.dataset_step, open_dataset if self.dataset is None else "", self.dataset is not None),
-            (self.columns_step, self.columns_step.problem, self.selection is not None),
+            (self.dataset_step, dataset_issue, dataset_confirmed),
             (self.split_step, self.split_step.problem, self.train_data is not None),
             (self.preprocess_step, self._preprocess_problem(), self.preprocessed_data is not None),
             (self.model_step, "" if self.model is not None else "Create the model to continue.", self.model is not None),
@@ -355,25 +365,63 @@ class DatasetWindow(App):
                 elif step is self.preprocess_step:
                     done = self.preprocess_step.status.text or self.preprocess_step.summary.text
                 elif step is self.model_step:
-                    done = self.model_step.status.text
+                    done = self.model_step.status.text or "Ready to continue."
                 elif step is self.predict_step:
                     done = "Enter the input values and make a prediction with the model."
                 else:
                     done = "Ready to continue."
                 self.feedback.text = hint or done
-                # The model is confirmed with its own button, so the footer only continues.
-                if not confirmed and step is not self.dataset_step and step is not self.model_step:
+                if step is self.dataset_step and self.dataset is not None and self.selection is None:
+                    self.advance.text = "Confirm columns"
+                elif not confirmed and step is not self.model_step:
                     self.advance.text = confirmation
         if self._busy_message:
             self.feedback.text = self._busy_message
         self.advance.enabled = not self._busy_message and not problem and self.wizard.selected_index < len(self.wizard.steps) - 1
         self.model_step.set_prerequisite(self._model_prerequisite())
-        starting = self.dataset is None and self.model is None
-        self.start_screen.visible = starting
-        self.wizard.visible = self.footer.visible = self.feedback.visible = not starting
+        if self.dataset is not None or self.model is not None:
+            self._dismiss_start_screen()
+        self.load_model_button.visible = self.wizard.selected_step is self.model_step
         showing_fit = self.dataset is not None and self.model is not None and self.wizard.selected_step is self.model_step
         self.preview.visible = self.dataset is not None and not showing_fit
         self.fit_panel.visible, self.no_data_panel.visible = showing_fit, loaded
+
+    def _place_start_screen(self) -> None:
+        """Center the start dialog in the window."""
+        area = self.content_bounds(self.bounds)
+        width = self.start_screen.width if self.start_screen.width is not None else self.start_screen.bounds.width
+        height = self.start_screen.height if self.start_screen.height is not None else self.start_screen.bounds.height
+        self.start_screen.update(left=max(0, (area.width - width) / 2), top=max(0, (area.height - height) / 2))
+
+    def _present_start_screen(self, event: UiEvent) -> None:
+        """Open the start dialog modally once the window is running."""
+        if self._start_dismissed or self.dataset is not None or self.model is not None:
+            return
+        self._place_start_screen()
+        self.start_screen.show(modal=True, owner=self)
+
+    def start_screen_on_closing(self, event: ClosingEvent) -> None:
+        """Leave the dialog closed after the user dismisses it or a file loads."""
+        self._start_dismissed = True
+
+    def _dismiss_start_screen(self) -> None:
+        """Close the start dialog after a dataset or a model is available."""
+        if self._start_dismissed:
+            return
+        self._start_dismissed = True
+        if self.start_screen.visible:
+            self.start_screen.close()
+
+    def _show_notice(self, message: str, title: str) -> None:
+        """Show ``message`` when the window is running, and keep the text when it is not.
+
+        Headless tests build the window without a runtime, which cannot present a subwindow.
+        """
+        if self._runtime is None:
+            self.notice_dialog.title = title
+            self.notice_dialog.message_text.text = message
+            return
+        self.notice_dialog.show_error(message, title=title)
 
     def _preprocess_problem(self) -> str:
         """Block the model while the selected columns still contain missing values."""
@@ -423,7 +471,7 @@ class DatasetWindow(App):
         """Choose a saved model to start with; the start screen stays when the dialog is cancelled or the load fails."""
         await self._browse_model()
 
-    async def load_model_button_on_click(self, event: ClickEvent) -> None:
+    async def model_step_on_load_model(self, event: UiEvent) -> None:
         """Choose a saved model to replace the current dataset or model."""
         await self._browse_model()
 

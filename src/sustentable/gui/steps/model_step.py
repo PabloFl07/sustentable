@@ -7,17 +7,19 @@ from pysual import Button, ChangeEvent, ClickEvent, Container, Event, Label, Scr
 
 from sustentable.core.model.regression import RegressionModel, format_metric
 
-STEP_HEIGHT = 176
+STEP_HEIGHT = 248
 _READY = "Ready. The model is fitted with the training subset only and evaluated on both subsets."
 _NO_FORMULA = "Create the model to see its formula."
 _NO_VALUE = "—"
-_ACTIONS_WIDTH = 230
-_SAVE_WIDTH = 260
+_ACTIONS_WIDTH = 220
+_DESCRIPTION_WIDTH = 280
 _NAME_WIDTH = 200
 _VALUE_WIDTH = 112
 _CELL_SPACING = 8
 _TABLE_PADDING = 10
 _CAPTION_HEIGHT = 20
+_FORMULA_HEIGHT = 36
+_BUTTON_HEIGHT = 36
 
 
 class ModelStep(Step):
@@ -27,22 +29,27 @@ class ModelStep(Step):
     ``clear_model`` once the data it was trained with changes. ``set_prerequisite`` explains what is still missing to
     create a model; the create button is only enabled when nothing is. ``save_model`` asks the owner to save the model
     shown with ``description_text``; its button is only enabled while a model is shown, and ``show_saved`` reports where
-    it was saved.
+    it was saved. ``load_model`` asks the owner to open a saved model. Create, load and save stay in the same group.
 
     ``show_loaded`` shows a model loaded from a file instead. There is no data behind it, so the create button is
-    replaced by the input and output columns, which the columns step cannot show. Clearing a loaded model also clears
-    the description that came with it, so it is never saved with a model created afterwards.
+    replaced by the input and output columns. Clearing a loaded model also clears the description that came with it,
+    so it is never saved with a model created afterwards.
 
     ``has_unsaved_changes`` tells whether the model shown was never saved or its description changed since it was
     saved or loaded, and ``saved_path`` is that file. ``edited`` is emitted whenever the description changes.
     """
 
     create_model: ClassVar[Event[UiEvent]] = Event(UiEvent)
+    load_model: ClassVar[Event[UiEvent]] = Event(UiEvent)
     save_model: ClassVar[Event[UiEvent]] = Event(UiEvent)
     edited: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Place the create button or the columns, the status, the formula, the metrics table and the save panel."""
+        """Place create, load and save together, then the formula with the metrics under it, and the description.
+
+        ``status`` keeps the prerequisite and save messages for the footer. It is not shown under the buttons:
+        creating a model reports the result in a message box instead.
+        """
         super().__init__(title="Model", direction="horizontal", height=STEP_HEIGHT, padding=8, spacing=16, **properties)
         self._prerequisite = ""
         self._model: RegressionModel | None = None
@@ -56,30 +63,33 @@ class ModelStep(Step):
 
         actions = Container(parent=self, layout="stack", spacing=4, width=_ACTIONS_WIDTH)
         Label(parent=actions, text="MODEL", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        actions_box = Container(parent=actions, layout="stack", padding=10, spacing=8, background=box, flex=1)
-        self.create_button = Button(parent=actions_box, text="Create model", height=36)
-        self.columns_text = Label(parent=actions_box, word_wrap=True, background=box)
-        self.status = Label(parent=actions_box, word_wrap=True, background=box, flex=1)
+        commands = Container(parent=actions, layout="stack", padding=10, spacing=8, background=box, flex=1)
+        self.create_button = Button(parent=commands, text="Create model", height=_BUTTON_HEIGHT)
+        self.load_button = Button(parent=commands, text="Load model", height=_BUTTON_HEIGHT)
+        self.save_button = Button(parent=commands, text="Save model", height=_BUTTON_HEIGHT)
+        self.columns_text = Label(parent=commands, word_wrap=True, background=box)
+        # Kept for the footer and for tests. The creation result is a message box, not a label under the buttons.
+        self.status = Label(parent=self, visible=False)
 
-        formula = Container(parent=self, layout="stack", spacing=4, flex=1)
-        self.formula_caption = Label(parent=formula, height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        formula_box = ScrollArea(parent=formula, layout="stack", padding=10, background=box, flex=1)
-        self.formula = Label(parent=formula_box, word_wrap=True, font_family="mono", background=box)
-
-        table_width = _NAME_WIDTH + 2 * _VALUE_WIDTH + 2 * _CELL_SPACING + 2 * _TABLE_PADDING
-        metrics = Container(parent=self, layout="stack", spacing=4, width=table_width)
-        Label(parent=metrics, text="METRICS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
-        table = Container(parent=metrics, layout="stack", padding=_TABLE_PADDING, spacing=8, background=box, flex=1)
+        details = Container(parent=self, layout="stack", spacing=6, flex=1)
+        self.formula_caption = Label(parent=details, height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        formula_line = ScrollArea(parent=details, layout="stack", direction="horizontal", padding=8, height=_FORMULA_HEIGHT, background=box)
+        self.formula = Label(parent=formula_line, word_wrap=False, font_family="mono", height=20, background=box)
+        Label(parent=details, text="METRICS", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        table = Container(parent=details, layout="stack", padding=_TABLE_PADDING, spacing=8, background=box)
         _row(table, box, ("Metric", "Training", "Test"), foreground=muted)
         self.r2_values = _row(table, box, ("Determination (R²)", _NO_VALUE, _NO_VALUE))
         self.mse_values = _row(table, box, ("Mean squared error", _NO_VALUE, _NO_VALUE))
 
-        save = Container(parent=self, layout="stack", spacing=4, width=_SAVE_WIDTH)
-        Label(parent=save, text="DESCRIPTION", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
+        description = Container(parent=self, layout="stack", spacing=4, width=_DESCRIPTION_WIDTH)
+        Label(parent=description, text="DESCRIPTION", height=_CAPTION_HEIGHT, font_size=13, foreground=muted)
         self.description = TextBox(
-            parent=save, multiline=True, word_wrap=True, placeholder="Optional: what the model predicts and how to use it.", flex=1
+            parent=description,
+            multiline=True,
+            word_wrap=True,
+            placeholder="Optional: what the model predicts and how to use it.",
+            flex=1,
         )
-        self.save_button = Button(parent=save, text="Save model", width=_SAVE_WIDTH, height=32)
         self._refresh()
 
     @property
@@ -134,6 +144,10 @@ class ModelStep(Step):
         """Ask the owning window to create the model."""
         self.create_model.emit(UiEvent(source=self, origin=event.origin))
 
+    def load_button_on_click(self, event: ClickEvent) -> None:
+        """Ask the owning window to load a saved model."""
+        self.load_model.emit(UiEvent(source=self, origin=event.origin))
+
     def save_button_on_click(self, event: ClickEvent) -> None:
         """Ask the owning window to save the model shown."""
         if self._model is not None:
@@ -169,7 +183,8 @@ class ModelStep(Step):
         train, test = model.train_metrics, model.test_metrics
         kind = "Simple" if model.is_simple else "Multiple"
         if self._saved_path is None:
-            self.status.text = f"Model created successfully. {kind} regression trained on {train.rows:,} rows and tested on {test.rows:,} rows."
+            # The window shows this result in a message box, so nothing is left under the button.
+            self.status.text = ""
         else:
             # Next to the columns there is only room for the file name; the tooltip keeps the full path.
             place = self._saved_path.name if self._loaded else self._saved_path

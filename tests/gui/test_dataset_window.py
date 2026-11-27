@@ -123,16 +123,16 @@ def test_show_dataset_displays_the_file(request: pytest.FixtureRequest, tmp_path
     assert [row.cells for row in window.dataset_grid.rows] == [("José", 19), ("Begoña", 21)]
 
 
-def test_columns_become_reachable_once_a_dataset_loads(example_csv: Path, show_error_dialog: Mock) -> None:
-    """Loading populates the columns and unlocks their step while retaining the shared preview."""
+def test_columns_are_listed_in_the_dataset_step_once_a_file_loads(example_csv: Path, show_error_dialog: Mock) -> None:
+    """Loading fills the column picker. The split stays locked until those columns are confirmed."""
     window = _window()
     assert not window.wizard.can_select(1)
     assert not window.advance.enabled
 
     asyncio.run(window.show_dataset(example_csv))
 
-    assert window.wizard.can_select(1)
-    assert window.advance.enabled
+    assert window.wizard.selected_step is window.dataset_step
+    assert not window.wizard.can_select(1)
     assert [check.text for check in window.columns_step._inputs] == ["name", "age"]
 
 

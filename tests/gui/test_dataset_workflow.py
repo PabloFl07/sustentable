@@ -19,7 +19,7 @@ from sustentable.core.processing.data_processing import NanStrategy, detect_nan_
 from sustentable.gui import dataset_window
 from sustentable.gui.controls.confirm_dialog import ConfirmDialog
 from sustentable.gui.controls.error_dialog import ErrorDialog
-from sustentable.gui.dataset_window import MODEL_ERROR_TITLE, SAVE_ERROR_TITLE, SAVED_TITLE, DatasetWindow
+from sustentable.gui.dataset_window import CREATED_TITLE, MODEL_ERROR_TITLE, SAVE_ERROR_TITLE, SAVED_TITLE, DatasetWindow
 from sustentable.gui.steps import split_step
 from sustentable.gui.steps.preprocess_step import STRATEGY_LABELS
 
@@ -92,11 +92,10 @@ def dataset_path(tmp_path: Path) -> Path:
 
 async def _confirmed_split(window: WorkflowWindow, path: Path) -> None:
     await window.show_dataset(path)
-    await window.press_continue()
     await window.choose_columns()
     await window.press_continue()
     await window.press_continue()
-    assert window.wizard.selected_index == 3
+    assert window.wizard.selected_index == 2
 
 
 def test_guidance_confirmation_optional_steps_and_shared_preview(window: WorkflowWindow, dataset_path: Path) -> None:
@@ -105,40 +104,39 @@ def test_guidance_confirmation_optional_steps_and_shared_preview(window: Workflo
     async def exercise() -> None:
         assert window.wizard.orientation == "horizontal" and window.wizard.linear
         assert not window.advance.enabled
-        await window.request_step(5)
+        await window.request_step(4)
         assert window.wizard.selected_index == 0
         await window.show_dataset(dataset_path)
-        await window.press_continue()
-        assert window.wizard.selected_index == 1
+        assert window.wizard.selected_index == 0
         assert "output" in window.feedback.text
         assert not window.advance.enabled
         await window.choose_columns()
         assert window.advance.enabled and window.advance.text == "Confirm columns"
-        await window.request_step(5)
-        assert window.wizard.selected_index == 1
+        await window.request_step(4)
+        assert window.wizard.selected_index == 0
         assert window.selection is None
         await window.press_continue()
         assert window.selection == (["area"], "energy")
-        assert window.wizard.selected_index == 2
+        assert window.wizard.selected_index == 1
         assert "Training: 8 rows" in window.split_step.counts.text
-        await window.request_step(4)
-        assert window.wizard.selected_index == 2
+        await window.request_step(3)
+        assert window.wizard.selected_index == 1
         await window.press_continue()
         assert len(window.train_data) == 8 and len(window.test_data) == 2
         assert sorted([*window.train_data.area, *window.test_data.area]) == list(range(10))
         raw_rows = window.dataset_grid.rows
         assert window.preprocess_step.completed and not window.preprocess_step.has_missing_values
-        await window.request_step(5)
-        assert window.wizard.selected_index == 4, "Predictions need a model first."
+        await window.request_step(4)
+        assert window.wizard.selected_index == 3, "Predictions need a model first."
         await window.create_model()
-        assert window.wizard.steps[5] is window.predict_step and window.predict_step.optional
-        await window.request_step(5)
-        assert window.wizard.selected_index == 5
+        assert window.wizard.steps[4] is window.predict_step and window.predict_step.optional
+        await window.request_step(4)
+        assert window.wizard.selected_index == 4
         assert not window.advance.enabled
         assert window.preview.visible and window.dataset_grid.visible and window.dataset_grid.rows == raw_rows
         window.back.click.emit(ClickEvent(source=window.back))
         await window.settle()
-        assert window.wizard.selected_index == 4
+        assert window.wizard.selected_index == 3
 
     asyncio.run(exercise())
 
@@ -149,12 +147,12 @@ def test_back_preserves_results_and_column_edits_invalidate_dependents(window: W
     async def exercise() -> None:
         await _confirmed_split(window, dataset_path)
         train, test = window.train_data, window.test_data
-        await window.request_step(1)
+        await window.request_step(0)
         assert window.train_data is train and window.test_data is test
         assert window.columns_step.input_columns == ["area"]
         await window.choose_columns((0, 1))
         assert window.selection is None and window.train_data is None and window.test_data is None
-        assert not window.wizard.can_select(2)
+        assert not window.wizard.can_select(1)
         assert window.columns_step.mode.text == "Multiple regression"
         await window.press_continue()
         assert window.selection == (["area", "occupants"], "energy")
@@ -172,14 +170,14 @@ def test_split_edits_clear_results_and_empty_subsets_block_confirmation(
 
     async def exercise() -> None:
         await _confirmed_split(window, dataset_path)
-        await window.request_step(2)
+        await window.request_step(1)
         window.split_step.share.value = invalid_percentage
         await window.settle()
         assert window.train_data is None and window.test_data is None
         assert not window.advance.enabled
         assert "both training and test" in window.feedback.text
-        await window.request_step(5)
-        assert window.wizard.selected_index == 2
+        await window.request_step(4)
+        assert window.wizard.selected_index == 1
         window.split_step.share.value = 40
         await window.settle()
         assert window.advance.enabled
@@ -204,17 +202,17 @@ def test_replacement_resets_workflow_but_failed_load_keeps_confirmed_results(
         await window.show_dataset(tmp_path / "missing.csv")
         assert "has not been saved" in confirm.call_args.args[0]
         assert errors.call_count == 1
-        assert window.wizard.selected_index == 3
+        assert window.wizard.selected_index == 2
         assert window.train_data is train and window.test_data is test and window.selection == selected
         assert window.model is model and model is not None
-        assert window.wizard.can_select(5)
+        assert window.wizard.can_select(4)
         await window.show_dataset(dataset_path)
         await window.settle()
         assert window.wizard.selected_index == 0
         assert window.selection is None and window.train_data is None and window.test_data is None
         assert window.model is None and not window.fit_chart.point_series
         assert not window.columns_step.input_columns and window.columns_step.output_column is None
-        assert window.wizard.can_select(1) and not window.wizard.can_select(2)
+        assert not window.wizard.can_select(1)
 
     asyncio.run(exercise())
 
@@ -284,7 +282,7 @@ def test_selected_seed_drives_the_split_is_shown_and_editing_it_clears_the_subse
     async def exercise() -> None:
         await _confirmed_split(window, dataset_path)
         assert seeds == [split_step.SPLIT_SEED]
-        await window.request_step(2)
+        await window.request_step(1)
         assert f"seed {split_step.SPLIT_SEED}" in window.feedback.text
         window.split_step.seed_input.value = 7
         await window.settle()
@@ -366,13 +364,13 @@ def test_pending_split_stays_responsive_ignores_duplicate_clicks_and_recovers(
         assert window.wizard.enabled and not window.loading_row.visible
         if fail:
             errors.assert_called_once_with("Cannot split these rows.", title="Unable to split dataset")
-            assert window.wizard.selected_index == 2 and window.advance.enabled
+            assert window.wizard.selected_index == 1 and window.advance.enabled
             assert window.train_data is None and window.test_data is None
             monkeypatch.setattr(split_step, "split_dataset", split)
             await window.press_continue()
         else:
             errors.assert_not_called()
-        assert window.wizard.selected_index == 3
+        assert window.wizard.selected_index == 2
         assert len(window.train_data) == 8 and len(window.test_data) == 2
 
     asyncio.run(exercise())
@@ -452,8 +450,8 @@ def test_missing_values_block_the_model_until_preprocessing_is_applied(window: W
         assert step.has_missing_values and report.train.sum() + report.test.sum() == 3
         assert [row.text for row in step._rows][0] == f"area: training {report.train[0]} · test {report.test[0]}"
         assert not window.advance.enabled and "Apply preprocessing" in window.feedback.text
-        await window.request_step(4)
-        assert window.wizard.selected_index == 3
+        await window.request_step(3)
+        assert window.wizard.selected_index == 2
         assert not step.constant.enabled
 
         await _apply(window, NanStrategy.MEAN)
@@ -473,7 +471,7 @@ def test_missing_values_block_the_model_until_preprocessing_is_applied(window: W
         await _apply(window, NanStrategy.CONSTANT, "-1")
         assert window.preprocessed_data[0].area.min() == -1
         await window.press_continue()
-        assert window.wizard.selected_index == 4
+        assert window.wizard.selected_index == 3
 
     asyncio.run(exercise())
 
@@ -502,17 +500,17 @@ def test_split_and_column_changes_require_preprocessing_again(window: WorkflowWi
         await _confirmed_split(window, missing_path)
         await _apply(window, NanStrategy.MEDIAN)
         assert window.preprocessed_data is not None
-        await window.request_step(2)
+        await window.request_step(1)
         window.split_step.share.value = 30
         await window.settle()
         assert window.preprocessed_data is None and not window.preprocess_step.has_missing_values
         await window.press_continue()
-        assert window.wizard.selected_index == 3 and window.preprocessed_data is None
+        assert window.wizard.selected_index == 2 and window.preprocessed_data is None
         await _apply(window, NanStrategy.MEDIAN)
         assert window.preprocessed_data is not None
-        await window.request_step(1)
+        await window.request_step(0)
         await window.choose_columns((0, 1))
-        assert window.preprocessed_data is None and not window.wizard.can_select(3)
+        assert window.preprocessed_data is None and not window.wizard.can_select(2)
 
     asyncio.run(exercise())
 
@@ -546,7 +544,7 @@ def test_applied_preprocessing_reloads_the_preview_and_the_counters(window: Work
         assert "(was" not in step._rows[0].text
 
         await _apply(window, NanStrategy.MEDIAN)
-        await window.request_step(1)
+        await window.request_step(0)
         await window.choose_columns((0,))
         await window.choose_columns((0,), output=1)
         assert window.dataset_grid.rows == raw_rows and window.preview_label.text == raw_caption
@@ -589,11 +587,10 @@ def model_path(tmp_path: Path) -> Path:
 async def _open_model_step(window: WorkflowWindow, path: Path, inputs: tuple[int, ...]) -> None:
     """Load a dataset without missing values, confirm the columns and the default split, and open the model step."""
     await window.show_dataset(path)
-    await window.press_continue()
     await window.choose_columns(inputs)
     for _ in range(3):
         await window.press_continue()
-    assert window.wizard.selected_index == 4
+    assert window.wizard.selected_index == 3
 
 
 def test_create_model_needs_confirmed_columns_split_and_no_missing_values(window: WorkflowWindow, missing_path: Path) -> None:
@@ -620,7 +617,7 @@ def test_create_model_needs_confirmed_columns_split_and_no_missing_values(window
         train, test = window.preprocessed_data
         assert (window.model.train_metrics.rows, window.model.test_metrics.rows) == (len(train), len(test))
 
-        await window.request_step(3)
+        await window.request_step(2)
         await _apply(window, NanStrategy.DELETE)
         assert window.model is None, "A new treatment changes the data, so the model must be created again."
         assert button.enabled and not step.completed
@@ -655,8 +652,12 @@ def test_simple_model_shows_its_formula_metrics_and_fit(window: WorkflowWindow, 
         assert step.formula.text == model.formula == "energy = 1.0000 * area + 20.0000"
         assert [label.text for label in step.r2_values] == ["1.0000", "1.0000"]
         assert [label.text for label in step.mse_values] == ["0.0000", "0.0000"]
-        assert step.status.text == "Model created successfully. Simple regression trained on 8 rows and tested on 2 rows."
-        assert window.feedback.text == step.status.text
+        assert window.notice_dialog.title == CREATED_TITLE
+        assert window.notice_dialog.message_text.text == (
+            "Model created successfully. Simple regression trained on 8 rows and tested on 2 rows."
+        )
+        assert step.status.text == ""
+        assert window.feedback.text == "Ready to continue."
         assert step.completed and window.advance.enabled
 
         assert window.fit_panel.visible and not window.preview.visible
@@ -673,10 +674,10 @@ def test_simple_model_shows_its_formula_metrics_and_fit(window: WorkflowWindow, 
         assert line.start == pytest.approx((0.0, 20.0)) and line.end == pytest.approx((9.0, 29.0))
         assert model.predict(DataFrame({"area": [100]})) == pytest.approx([120.0])
 
-        await window.request_step(3)
+        await window.request_step(2)
         assert window.preview.visible and not window.fit_panel.visible
-        await window.request_step(5)
-        assert window.wizard.selected_index == 5 and window.model is model
+        await window.request_step(4)
+        assert window.wizard.selected_index == 4 and window.model is model
 
     asyncio.run(exercise())
 
@@ -693,7 +694,7 @@ def test_new_model_replaces_the_previous_one_and_data_changes_discard_it(window:
         await window.create_model()
         assert window.model is not first and window.model.formula == first.formula
 
-        await window.request_step(1)
+        await window.request_step(0)
         await window.choose_columns((0, 1))
         assert window.model is None and not window.fit_chart.point_series and window.fit_chart.plane is None
         assert not window.fit_panel.visible
@@ -717,7 +718,7 @@ def test_new_model_replaces_the_previous_one_and_data_changes_discard_it(window:
         for area, occupants, energy in (*training.points, *testing.points, *chart.plane.corners):
             assert energy == pytest.approx(2 * area - 3 * occupants + 50)
 
-        await window.request_step(2)
+        await window.request_step(1)
         window.split_step.share.value = 30
         await window.settle()
         assert window.model is None and not window.fit_chart.point_series and window.fit_chart.plane is None
@@ -741,7 +742,7 @@ def test_model_errors_are_reported_and_the_window_keeps_working(
         assert window.model is None and not window.fit_panel.visible
         assert window.wizard.enabled and not window.loading_row.visible and window.model_step.create_button.enabled
 
-        await window.request_step(1)
+        await window.request_step(0)
         await window.choose_columns((0,))
         for _ in range(3):
             await window.press_continue()
@@ -796,7 +797,7 @@ def test_save_button_is_only_enabled_while_a_model_is_shown(window: WorkflowWind
         assert not button.enabled
         await window.create_model()
         assert button.enabled
-        await window.request_step(2)
+        await window.request_step(1)
         window.split_step.share.value = 30
         await window.settle()
         assert not button.enabled
@@ -885,7 +886,8 @@ def test_cancelling_the_dialog_saves_nothing_and_shows_no_error(
         export.assert_not_called()
         errors.assert_not_called()
         notices.assert_not_called()
-        assert window.model_step.status.text.startswith("Model created successfully")
+        assert window.notice_dialog.message_text.text.startswith("Model created successfully")
+        assert window.model_step.status.text == ""
 
     asyncio.run(exercise())
 
@@ -1009,8 +1011,8 @@ def test_prediction_step_is_disabled_until_a_model_exists(window: WorkflowWindow
         assert step.model is None and not step.fields and not step.predict_button.enabled
         assert step.status.text == "Create or load a model to make predictions."
         await _open_model_step(window, model_path, (0, 1))
-        await window.request_step(5)
-        assert window.wizard.selected_index == 4
+        await window.request_step(4)
+        assert window.wizard.selected_index == 3
         await window.create_model()
         assert step.model is window.model and step.predict_button.enabled
         await window.press_continue()
@@ -1063,7 +1065,7 @@ def test_new_or_discarded_models_regenerate_the_fields_and_clear_the_result(wind
         await _predict(window, area="1", occupants="1")
         assert step.result.text != "—"
 
-        await window.request_step(1)
+        await window.request_step(0)
         await window.choose_columns((0,))
         assert step.model is None and not step.fields and step.result.text == "—" and not step.predict_button.enabled
 

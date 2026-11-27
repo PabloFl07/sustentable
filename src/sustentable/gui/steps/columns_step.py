@@ -1,23 +1,21 @@
-"""Compact input/output selection and selection summary for the columns step."""
+"""Compact input/output selection and selection summary, shown inside the dataset step."""
 
 from collections import Counter
 from collections.abc import Hashable, Iterable
 from itertools import count
 from typing import ClassVar
 
-from pysual import ChangeEvent, CheckBox, Container, Event, Label, RadioButton, ScrollArea, Step, Tokens, UiEvent
+from pysual import ChangeEvent, CheckBox, Container, Event, Label, RadioButton, ScrollArea, Tokens, UiEvent
 
-# Taller than the other steps so long column lists show more rows without scrolling.
-STEP_HEIGHT = 270
-HEADER_HEIGHT = 20
-ROW_HEIGHT = 22
-ROW_SPACING = 2
+HEADER_HEIGHT = 22
+ROW_HEIGHT = 28
+ROW_SPACING = 4
 
 
-class ColumnsStep(Step):
+class ColumnsStep(Container):
     """List the dataset columns as X check boxes and Y radio buttons, and summarize the chosen columns.
 
-    The owner window confirms the selection; this step keeps the choices consistent and emits ``edited``.
+    The owner window confirms the selection; this panel keeps the choices consistent and emits ``edited``.
     A column chosen as Y cannot also be an X. Column labels are kept as they are in the DataFrame,
     so the selection can index the frame directly.
 
@@ -29,9 +27,9 @@ class ColumnsStep(Step):
     edited: ClassVar[Event[UiEvent]] = Event(UiEvent)
 
     def __init__(self, tokens: Tokens, **properties: object) -> None:
-        """Keep independently scrolling X, Y and summary columns above the shared table."""
-        super().__init__(title="Columns", direction="horizontal", height=STEP_HEIGHT, padding=8, spacing=16, **properties)
-        self._background = tokens.surface
+        """Keep the X list, the Y list and the summary in three separate columns."""
+        super().__init__(layout="stack", direction="horizontal", spacing=12, flex=1, **properties)
+        self._background = tokens.raised
         self._tokens = tokens
         # Each panel gets its own radio group so two panels never share the Y choice.
         self._output_group_name = f"column-step-output-{next(self._instances)}"
@@ -40,13 +38,13 @@ class ColumnsStep(Step):
         self._inputs: list[CheckBox] = []
         self._outputs: list[RadioButton] = []
 
-        inputs = Container(parent=self, layout="stack", spacing=2, flex=1)
+        inputs = Container(parent=self, layout="stack", spacing=6, flex=1)
         Label(parent=inputs, text="Inputs (X)", height=HEADER_HEIGHT)
-        self.input_group = ScrollArea(parent=inputs, layout="stack", spacing=ROW_SPACING, flex=1)
-        outputs = Container(parent=self, layout="stack", spacing=2, flex=1)
+        self.input_group = ScrollArea(parent=inputs, layout="stack", padding=8, spacing=ROW_SPACING, background=tokens.raised, flex=1)
+        outputs = Container(parent=self, layout="stack", spacing=6, flex=1)
         Label(parent=outputs, text="Output (Y)", height=HEADER_HEIGHT)
-        self.output_group = ScrollArea(parent=outputs, layout="stack", spacing=ROW_SPACING, flex=1)
-        summary = Container(parent=self, layout="stack", spacing=4, flex=1)
+        self.output_group = ScrollArea(parent=outputs, layout="stack", padding=8, spacing=ROW_SPACING, background=tokens.raised, flex=1)
+        summary = Container(parent=self, layout="stack", spacing=6, flex=1)
 
         # Mode header (outside the box)
         self.mode = Label(parent=summary, text="", height=HEADER_HEIGHT, font_size=16)
@@ -165,8 +163,8 @@ class ColumnsStep(Step):
             fill = self._tokens.surface
             text_color = self._tokens.foreground
         for text in texts:
-            chip = Container(parent=holder, layout="stack", padding=5, background=fill)
-            Label(parent=chip, text=text, font_size=20, foreground=text_color, background=fill)
+            chip = Container(parent=holder, layout="stack", padding=6, background=fill)
+            Label(parent=chip, text=text, height=22, font_size=14, foreground=text_color, background=fill)
 
 
 def _distinct_texts(columns: list[Hashable]) -> list[str]:

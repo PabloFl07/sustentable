@@ -53,13 +53,19 @@ def errors(monkeypatch: pytest.MonkeyPatch) -> Mock:
 
 
 def _showing_start(window: StartWindow) -> bool:
-    """Whether the start screen is shown and every workflow section is hidden."""
-    others = (window.wizard, window.preview, window.fit_panel, window.no_data_panel, window.footer, window.feedback)
-    return window.start_screen.visible and not any(control.visible for control in others)
+    """Whether the start dialog is open over the workflow and no data is shown yet."""
+    hidden = (window.preview, window.fit_panel, window.no_data_panel)
+    return (
+        window.start_screen.visible
+        and window.wizard.visible
+        and window.footer.visible
+        and not window.load_model_button.visible
+        and not any(control.visible for control in hidden)
+    )
 
 
 def test_the_window_opens_on_the_start_screen(window: StartWindow) -> None:
-    """At startup only the two choices are shown, both ready to use, and their handlers reach the window."""
+    """At startup the start dialog offers both choices, and the workflow is already behind it."""
     screen = window.start_screen
 
     assert _showing_start(window)
@@ -71,7 +77,7 @@ def test_the_window_opens_on_the_start_screen(window: StartWindow) -> None:
 def test_load_dataset_opens_the_dataset_dialog_and_shows_the_workflow(
     window: StartWindow, example_csv: Path, monkeypatch: pytest.MonkeyPatch, errors: Mock
 ) -> None:
-    """The chosen file loads into the first step, and the workflow replaces the start screen."""
+    """The chosen file loads into the dataset step, and the start dialog closes."""
     chooser = AsyncMock(return_value=example_csv)
     monkeypatch.setattr(DatasetWindow, "choose_path", chooser)
 
@@ -82,7 +88,8 @@ def test_load_dataset_opens_the_dataset_dialog_and_shows_the_workflow(
     assert not window.start_screen.visible
     assert window.wizard.visible and window.preview.visible and window.footer.visible and window.feedback.visible
     assert not window.fit_panel.visible
-    assert window.wizard.selected_step is window.dataset_step and window.advance.enabled
+    assert window.wizard.selected_step is window.dataset_step and not window.advance.enabled
+    assert "output" in window.feedback.text
     assert window.dataset_step.path_text.text == str(example_csv.resolve())
     assert [row.cells for row in window.dataset_grid.rows] == [("José", 19), ("Begoña", 21)]
 
